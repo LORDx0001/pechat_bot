@@ -259,6 +259,10 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
         caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Цена: {product['price']} руб."
     else:
         caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Narxi: {product['price']} so'm"
+    prompt = _t(user_lang, "choose_size")
+    caption = f"{caption}\n\n👇 {prompt}"
+    markup = get_sizes_keyboard(sizes, language=user_lang)
+
     if product.get("image"):
         async with aiohttp.ClientSession() as session:
             async with session.get(product["image"]) as resp:
@@ -267,14 +271,14 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
                     await callback.message.answer_photo(
                         BufferedInputFile(img_bytes, filename="product.jpg"),
                         caption=caption,
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        reply_markup=markup
                     )
                 else:
-                    await callback.message.answer(caption, parse_mode="HTML")
+                    await callback.message.answer(caption, parse_mode="HTML", reply_markup=markup)
     else:
-        await callback.message.answer(caption, parse_mode="HTML")
+        await callback.message.answer(caption, parse_mode="HTML", reply_markup=markup)
         
-    await callback.message.answer(_t(user_lang, "choose_size"), reply_markup=get_sizes_keyboard(sizes, language=user_lang))
     await callback.answer()
 
 async def proceed_to_colors(callback: CallbackQuery, state: FSMContext, product: dict):
