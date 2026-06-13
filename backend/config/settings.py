@@ -13,6 +13,7 @@ DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -113,3 +114,31 @@ REST_FRAMEWORK = {
 
 # Telegram Bot Token (for sending updates from backend)
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+
+# Jazzmin Admin Panel Customization
+JAZZMIN_SETTINGS = {
+    "site_title": "PrintWear Admin",
+    "site_header": "PrintWear Admin",
+    "site_brand": "PrintWear",
+    "welcome_sign": "Добро пожаловать в панель управления PrintWear",
+    "copyright": "PrintWear Ltd",
+    "search_model": ["users.Client", "orders.Order"],
+    "show_ui_builder": False,
+    "changeform_format": "horizontal_tabs",
+    "topmenu_links": [
+        {"name": "Главная", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"model": "orders.Order"},
+        {"model": "products.Product"},
+    ],
+    "usermenu_links": [
+        {"model": "users.Client"},
+    ],
+    "show_sidebar": True,
+    "navigation_expanded": True,
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "theme": "flatly",
+    "dark_mode_theme": "darkly",
+}
+

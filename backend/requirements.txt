@@ -4,3 +4,5 @@ django-cors-headers>=4.3
 pillow>=10.3
 requests>=2.32
 python-dotenv>=1.0
+django-jazzmin
+
