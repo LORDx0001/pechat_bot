@@ -4,7 +4,7 @@ from .models import Category, Size, Color, Product, ProductImage, PrintPosition
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
-        fields = ['id', 'name', 'image', 'is_active']
+        fields = ['id', 'name', 'name_uz', 'image', 'is_active']
 
 class SizeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -14,12 +14,12 @@ class SizeSerializer(serializers.ModelSerializer):
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color
-        fields = ['id', 'name', 'hex_color']
+        fields = ['id', 'name', 'name_uz', 'hex_color']
 
 class PrintPositionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrintPosition
-        fields = ['id', 'name', 'extra_price', 'image', 'requires_multiple_designs']
+        fields = ['id', 'name', 'name_uz', 'extra_price', 'image', 'requires_multiple_designs']
 
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
@@ -29,7 +29,7 @@ class ProductImageSerializer(serializers.ModelSerializer):
 class ProductListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
-        fields = ['id', 'title', 'price', 'image', 'category', 'is_active']
+        fields = ['id', 'title', 'title_uz', 'price', 'image', 'category', 'is_active']
 
 class ProductDetailSerializer(serializers.ModelSerializer):
     category = CategorySerializer(read_only=True)
@@ -40,6 +40,6 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'category', 'title', 'description', 'image', 
+            'id', 'category', 'title', 'title_uz', 'description', 'description_uz', 'image', 
             'price', 'sizes', 'colors', 'gallery_images', 'is_active', 'created_at'
         ]

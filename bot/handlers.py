@@ -140,9 +140,9 @@ async def show_support(message: Message):
         message.from_user.first_name
     )
     store_settings = await api_client.get_settings()
-    about_text = "Служба поддержки"
+    about_text = "Служба поддержки" if user_lang == "ru" else "Qo'llab-quvvatlash xizmati"
     if store_settings and not store_settings.get("error"):
-        about_text = store_settings.get("about_text") or about_text
+        about_text = (store_settings.get("about_text_uz") if (user_lang == "uz" and store_settings.get("about_text_uz")) else store_settings.get("about_text")) or about_text
         
     manager_tg = store_settings.get("manager_telegram") or ""
     
@@ -253,12 +253,12 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
         
     await state.set_state(OrderingStates.size)
     await callback.message.delete()
-    
+    title = product.get("title_uz") if (user_lang == "uz" and product.get("title_uz")) else product["title"]
+    description = product.get("description_uz") if (user_lang == "uz" and product.get("description_uz")) else product["description"]
     if user_lang == "ru":
-        caption = f"👕 <b>{product['title']}</b>\n\n{product['description']}\n\n💵 Цена: {product['price']} руб."
+        caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Цена: {product['price']} руб."
     else:
-        caption = f"👕 <b>{product['title']}</b>\n\n{product['description']}\n\n💵 Narxi: {product['price']} so'm"
-    
+        caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Narxi: {product['price']} so'm"
     if product.get("image"):
         async with aiohttp.ClientSession() as session:
             async with session.get(product["image"]) as resp:
@@ -740,12 +740,18 @@ async def show_cart(message: Message):
     for idx, item in enumerate(items, 1):
         prod = item["product_details"]
         size = item["size_details"]["name"] if item["size_details"] else "—"
-        color = item["color_details"]["name"] if item["color_details"] else "—"
-        print_pos = item["print_position_details"]["name"] if item["print_position_details"] else "—"
+        
+        color_data = item["color_details"]
+        color = (color_data.get("name_uz") if (user_lang == "uz" and color_data.get("name_uz")) else color_data["name"]) if color_data else "—"
+        
+        print_pos_data = item["print_position_details"]
+        print_pos = (print_pos_data.get("name_uz") if (user_lang == "uz" and print_pos_data.get("name_uz")) else print_pos_data["name"]) if print_pos_data else "—"
+        
+        prod_title = prod.get("title_uz") if (user_lang == "uz" and prod.get("title_uz")) else prod["title"]
         
         if user_lang == "ru":
             msg += (
-                f"<b>{idx}. {prod['title']}</b>\n"
+                f"<b>{idx}. {prod_title}</b>\n"
                 f"📐 Размер: {size} | 🎨 Цвет: {color}\n"
                 f"📍 Принт: {print_pos}\n"
                 f"🔢 Кол-во: {item['quantity']} шт.\n"
@@ -753,7 +759,7 @@ async def show_cart(message: Message):
             )
         else:
             msg += (
-                f"<b>{idx}. {prod['title']}</b>\n"
+                f"<b>{idx}. {prod_title}</b>\n"
                 f"📐 O'lcham: {size} | 🎨 Rang: {color}\n"
                 f"📍 Bosma: {print_pos}\n"
                 f"🔢 Soni: {item['quantity']} dona\n"
@@ -797,39 +803,69 @@ async def delete_cart_item(callback: CallbackQuery):
 
 @router.callback_query(F.data == "cart_clear")
 async def clear_cart(callback: CallbackQuery):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
     await api_client.clear_cart(callback.from_user.id)
-    await callback.answer("Корзина очищена")
+    alert = "Корзина очищена" if user_lang == "ru" else "Savatcha tozalandi"
+    empty = "Ваша корзина пуста." if user_lang == "ru" else "Savatchangiz bo'sh."
+    await callback.answer(alert)
     await callback.message.delete()
-    await callback.message.answer("Ваша корзина пуста.")
+    await callback.message.answer(empty)
 
 async def refresh_cart_message(callback: CallbackQuery):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
     cart = await api_client.get_cart(callback.from_user.id)
     items = cart.get("items", [])
     
     if not items:
         await callback.message.delete()
-        await callback.message.answer("Ваша корзина пуста.")
+        empty = "Ваша корзина пуста." if user_lang == "ru" else "Savatchangiz bo'sh."
+        await callback.message.answer(empty)
         return
         
-    msg = "🛒 <b>Ваша корзина:</b>\n\n"
+    msg = "🛒 <b>Ваша корзина:</b>\n\n" if user_lang == "ru" else "🛒 <b>Sizning savatchangiz:</b>\n\n"
     for idx, item in enumerate(items, 1):
         prod = item["product_details"]
         size = item["size_details"]["name"] if item["size_details"] else "—"
-        color = item["color_details"]["name"] if item["color_details"] else "—"
-        print_pos = item["print_position_details"]["name"] if item["print_position_details"] else "—"
         
-        msg += (
-            f"<b>{idx}. {prod['title']}</b>\n"
-            f"📐 Размер: {size} | 🎨 Цвет: {color}\n"
-            f"📍 Принт: {print_pos}\n"
-            f"🔢 Кол-во: {item['quantity']} шт.\n"
-            f"💵 Стоимость: {item['total_price']} руб.\n\n"
-        )
+        color_data = item["color_details"]
+        color = (color_data.get("name_uz") if (user_lang == "uz" and color_data.get("name_uz")) else color_data["name"]) if color_data else "—"
         
-    msg += f"<b>Итого к оплате: {cart['total_cart_price']} руб.</b>"
+        print_pos_data = item["print_position_details"]
+        print_pos = (print_pos_data.get("name_uz") if (user_lang == "uz" and print_pos_data.get("name_uz")) else print_pos_data["name"]) if print_pos_data else "—"
+        
+        prod_title = prod.get("title_uz") if (user_lang == "uz" and prod.get("title_uz")) else prod["title"]
+        
+        if user_lang == "ru":
+            msg += (
+                f"<b>{idx}. {prod_title}</b>\n"
+                f"📐 Размер: {size} | 🎨 Цвет: {color}\n"
+                f"📍 Принт: {print_pos}\n"
+                f"🔢 Кол-во: {item['quantity']} шт.\n"
+                f"💵 Стоимость: {item['total_price']} руб.\n\n"
+            )
+        else:
+            msg += (
+                f"<b>{idx}. {prod_title}</b>\n"
+                f"📐 O'lcham: {size} | 🎨 Rang: {color}\n"
+                f"📍 Bosma: {print_pos}\n"
+                f"🔢 Soni: {item['quantity']} dona\n"
+                f"💵 Narxi: {item['total_price']} so'm\n\n"
+            )
+        
+    total_val = cart['total_cart_price']
+    total_msg = f"<b>Итого к оплате: {total_val} руб.</b>" if user_lang == "ru" else f"<b>Jami to'lov: {total_val} so'm</b>"
+    msg += total_msg
     
     try:
-        await callback.message.edit_text(msg, parse_mode="HTML", reply_markup=get_cart_keyboard(items))
+        await callback.message.edit_text(msg, parse_mode="HTML", reply_markup=get_cart_keyboard(items, language=user_lang))
     except Exception:
         pass
     await callback.answer()

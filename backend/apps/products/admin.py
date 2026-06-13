@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.html import format_html
 from .models import Category, Size, Color, Product, ProductImage, PrintPosition
 
 class ProductImageInline(admin.TabularInline):
@@ -7,9 +8,9 @@ class ProductImageInline(admin.TabularInline):
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_active')
+    list_display = ('name', 'name_uz', 'is_active')
     list_filter = ('is_active',)
-    search_fields = ('name',)
+    search_fields = ('name', 'name_uz')
 
 @admin.register(Size)
 class SizeAdmin(admin.ModelAdmin):
@@ -18,15 +19,13 @@ class SizeAdmin(admin.ModelAdmin):
 
 @admin.register(Color)
 class ColorAdmin(admin.ModelAdmin):
-    list_display = ('name', 'hex_color')
-    search_fields = ('name', 'hex_color')
-
-from django.utils.html import format_html
+    list_display = ('name', 'name_uz', 'hex_color')
+    search_fields = ('name', 'name_uz', 'hex_color')
 
 @admin.register(PrintPosition)
 class PrintPositionAdmin(admin.ModelAdmin):
-    list_display = ('name', 'extra_price', 'image_preview')
-    search_fields = ('name',)
+    list_display = ('name', 'name_uz', 'extra_price', 'image_preview')
+    search_fields = ('name', 'name_uz')
 
     def image_preview(self, obj):
         if obj.image:
@@ -36,8 +35,8 @@ class PrintPositionAdmin(admin.ModelAdmin):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('title', 'category', 'price', 'is_active', 'created_at')
+    list_display = ('title', 'title_uz', 'category', 'price', 'is_active', 'created_at')
     list_filter = ('category', 'is_active')
-    search_fields = ('title', 'description')
+    search_fields = ('title', 'title_uz', 'description', 'description_uz')
     filter_horizontal = ('sizes', 'colors')
     inlines = [ProductImageInline]

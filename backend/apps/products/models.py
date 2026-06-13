@@ -2,6 +2,7 @@ from django.db import models
 
 class Category(models.Model):
     name = models.CharField(max_length=100, verbose_name="Название")
+    name_uz = models.CharField(max_length=100, null=True, blank=True, verbose_name="Название (UZ)")
     image = models.ImageField(upload_to="categories/", null=True, blank=True, verbose_name="Изображение")
     is_active = models.BooleanField(default=True, verbose_name="Активна")
 
@@ -24,6 +25,7 @@ class Size(models.Model):
 
 class Color(models.Model):
     name = models.CharField(max_length=100, verbose_name="Цвет")
+    name_uz = models.CharField(max_length=100, null=True, blank=True, verbose_name="Цвет (UZ)")
     hex_color = models.CharField(max_length=7, default="#FFFFFF", help_text="HEX код, например #FFFFFF", verbose_name="HEX код цвета")
 
     class Meta:
@@ -36,7 +38,9 @@ class Color(models.Model):
 class Product(models.Model):
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="products", verbose_name="Категория")
     title = models.CharField(max_length=200, verbose_name="Название")
+    title_uz = models.CharField(max_length=200, null=True, blank=True, verbose_name="Название (UZ)")
     description = models.TextField(verbose_name="Описание")
+    description_uz = models.TextField(null=True, blank=True, verbose_name="Описание (UZ)")
     image = models.ImageField(upload_to="products/", verbose_name="Основное изображение")
     price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Цена")
     sizes = models.ManyToManyField(Size, related_name="products", verbose_name="Доступные размеры")
@@ -61,6 +65,7 @@ class ProductImage(models.Model):
 
 class PrintPosition(models.Model):
     name = models.CharField(max_length=100, verbose_name="Название места")
+    name_uz = models.CharField(max_length=100, null=True, blank=True, verbose_name="Название места (UZ)")
     extra_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name="Дополнительная стоимость")
     image = models.ImageField(upload_to="print_positions/", null=True, blank=True, verbose_name="Изображение-схема")
     requires_multiple_designs = models.BooleanField(default=False, verbose_name="Требует два макета (например, спереди и сзади)")

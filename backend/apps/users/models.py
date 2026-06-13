@@ -40,7 +40,9 @@ class StoreSettings(SingletonModel):
     currency = models.CharField(max_length=10, default="RUB", verbose_name="Валюта")
     min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name="Минимальная сумма заказа")
     welcome_text = models.TextField(blank=True, verbose_name="Текст приветствия")
+    welcome_text_uz = models.TextField(blank=True, verbose_name="Текст приветствия (UZ)")
     about_text = models.TextField(blank=True, verbose_name="Текст о компании")
+    about_text_uz = models.TextField(blank=True, verbose_name="Текст о компании (UZ)")
     admin_chat_id = models.CharField(max_length=50, blank=True, help_text="Telegram ID чата/канала или администратора для отправки уведомлений о заказах и чеках", verbose_name="Telegram ID чата уведомлений")
 
     class Meta:

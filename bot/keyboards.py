@@ -65,7 +65,8 @@ def get_share_phone_keyboard(language: str = "ru") -> ReplyKeyboardMarkup:
 def get_categories_keyboard(categories: list, language: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for category in categories:
-        builder.button(text=category["name"], callback_data=f"cat_{category['id']}")
+        name = category.get("name_uz") if (language == "uz" and category.get("name_uz")) else category["name"]
+        builder.button(text=name, callback_data=f"cat_{category['id']}")
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
     return builder.as_markup()
@@ -73,7 +74,8 @@ def get_categories_keyboard(categories: list, language: str = "ru") -> InlineKey
 def get_products_keyboard(products: list, category_id: int, language: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for prod in products:
-        price_text = f"{prod['title']} - {prod['price']} руб" if language == "ru" else f"{prod['title']} - {prod['price']} so'm"
+        title = prod.get("title_uz") if (language == "uz" and prod.get("title_uz")) else prod["title"]
+        price_text = f"{title} - {prod['price']} руб" if language == "ru" else f"{title} - {prod['price']} so'm"
         builder.button(text=price_text, callback_data=f"prod_{prod['id']}")
     builder.adjust(1)
     builder.row(
@@ -93,7 +95,8 @@ def get_sizes_keyboard(sizes: list, language: str = "ru") -> InlineKeyboardMarku
 def get_colors_keyboard(colors: list, language: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for c in colors:
-        builder.button(text=c["name"], callback_data=f"color_{c['id']}")
+        name = c.get("name_uz") if (language == "uz" and c.get("name_uz")) else c["name"]
+        builder.button(text=name, callback_data=f"color_{c['id']}")
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
     return builder.as_markup()
@@ -101,7 +104,8 @@ def get_colors_keyboard(colors: list, language: str = "ru") -> InlineKeyboardMar
 def get_print_positions_keyboard(positions: list, language: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for pos in positions:
-        text = f"{pos['name']} (+{pos['extra_price']} руб)" if language == "ru" else f"{pos['name']} (+{pos['extra_price']} so'm)"
+        name = pos.get("name_uz") if (language == "uz" and pos.get("name_uz")) else pos["name"]
+        text = f"{name} (+{pos['extra_price']} руб)" if language == "ru" else f"{name} (+{pos['extra_price']} so'm)"
         builder.button(text=text, callback_data=f"print_{pos['id']}")
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
@@ -117,7 +121,8 @@ def get_cart_keyboard(cart_items: list, language: str = "ru") -> InlineKeyboardM
     builder = InlineKeyboardBuilder()
     
     for item in cart_items:
-        prod_title = item['product_details']['title']
+        prod_details = item['product_details']
+        prod_title = prod_details.get("title_uz") if (language == "uz" and prod_details.get("title_uz")) else prod_details['title']
         builder.row(
             InlineKeyboardButton(text=f"➖ {prod_title}", callback_data=f"cart_qty_dec_{item['id']}"),
             InlineKeyboardButton(text=f"➕ {prod_title}", callback_data=f"cart_qty_inc_{item['id']}"),

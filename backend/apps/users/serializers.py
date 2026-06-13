@@ -11,7 +11,8 @@ class StoreSettingsSerializer(serializers.ModelSerializer):
         model = StoreSettings
         fields = [
             'shop_name', 'logo', 'contacts', 'manager_telegram', 
-            'currency', 'min_order_amount', 'welcome_text', 'about_text', 'admin_chat_id'
+            'currency', 'min_order_amount', 'welcome_text', 'welcome_text_uz', 
+            'about_text', 'about_text_uz', 'admin_chat_id'
         ]
 class ClientRegisterSerializer(serializers.Serializer):
     telegram_id = serializers.IntegerField()
