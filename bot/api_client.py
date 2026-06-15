@@ -121,11 +121,13 @@ class APIClient:
     async def cancel_order(self, order_id: int):
         return await self._request("POST", f"/api/orders/{order_id}/cancel/")
 
-    async def verify_receipt(self, receipt_id: int, action: str, token: str):
+    async def verify_receipt(self, receipt_id: int, action: str, token: str, comment: str = None):
         payload = {
             "action": action,
             "token": token
         }
+        if comment:
+            payload["comment"] = comment
         return await self._request("POST", f"/api/receipts/{receipt_id}/verify/", json=payload)
 
     async def get_manager_stats(self, telegram_id: int):
@@ -138,5 +140,8 @@ class APIClient:
             "phone": phone
         }
         return await self._request("POST", "/api/orders/other-services/", json=payload)
+
+    async def get_portfolio(self):
+        return await self._request("GET", "/api/portfolio/")
 
 api_client = APIClient(settings.backend_url)

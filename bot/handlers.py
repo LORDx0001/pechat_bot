@@ -11,10 +11,11 @@ from bot.keyboards import (
     get_categories_keyboard, get_products_keyboard, get_sizes_keyboard,
     get_colors_keyboard, get_print_positions_keyboard, get_comment_skip_keyboard,
     get_cart_keyboard, get_checkout_confirm_keyboard, get_pay_payment_keyboard,
-    get_manager_menu_keyboard, get_design_2_keyboard, get_language_keyboard
+    get_manager_menu_keyboard, get_design_2_keyboard, get_language_keyboard,
+    get_back_cancel_keyboard
 )
 from bot.translations import _t
-from bot.states import OrderingStates, CheckoutStates, ReceiptStates, SupportStates, OtherServicesStates
+from bot.states import OrderingStates, CheckoutStates, ReceiptStates, SupportStates, OtherServicesStates, AdminStates
 
 from bot.config import settings
 
@@ -33,6 +34,19 @@ async def get_user_lang_and_manager(user_id: int, username: str, first_name: str
         user_lang = client_info.get("language") or "ru"
         is_manager = client_info.get("is_manager", False)
     return user_lang, is_manager
+
+async def get_currency_display(user_lang: str) -> str:
+    try:
+        settings_data = await api_client.get_settings()
+        curr = settings_data.get("currency", "so'm")
+    except Exception:
+        curr = "so'm"
+    
+    if curr.upper() in ["RUB", "РУБ"]:
+        return "руб." if user_lang == "ru" else "rubl"
+    elif curr.upper() in ["UZS", "SO'M", "SOM", "СУМ"]:
+        return "сум" if user_lang == "ru" else "so'm"
+    return curr
 
 async def get_user_main_menu(telegram_id: int, username: str = "", first_name: str = ""):
     user_lang, is_manager = await get_user_lang_and_manager(telegram_id, username, first_name)
@@ -164,7 +178,134 @@ async def show_support(message: Message):
 # CATALOG & ORDERING FLOW (FSM)
 # =====================================================================
 
-@router.message(F.text.in_({"🛍 Сделать заказ", "🛍 Buyurtma berish", "📂 Каталог", "📂 Katalog"}))
+@router.message(F.text.in_({"📂 Каталог", "📂 Katalog"}))
+async def start_portfolio(message: Message, state: FSMContext):
+    await state.clear()
+    user_lang, _ = await get_user_lang_and_manager(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+    
+    portfolio = await api_client.get_portfolio()
+    if not portfolio or (isinstance(portfolio, dict) and portfolio.get("error")):
+        msg = "В каталоге пока нет готовых изделий." if user_lang == "ru" else "Katalogda hozircha tayyor mahsulotlar yo'q."
+        await message.answer(msg)
+        return
+        
+    await state.update_data(
+        portfolio_list=portfolio,
+        current_portfolio_index=0
+    )
+    await show_portfolio_carousel(message, portfolio, 0)
+
+async def show_portfolio_carousel(message: Message, portfolio: list, index: int, edit_media: bool = False):
+    user_lang, _ = await get_user_lang_and_manager(
+        message.chat.id,
+        message.chat.username or "",
+        message.chat.first_name or ""
+    )
+    item = portfolio[index]
+    title = item.get("title_uz") if (user_lang == "uz" and item.get("title_uz")) else item["title"]
+    description = item.get("description_uz") if (user_lang == "uz" and item.get("description_uz")) else item["description"]
+    
+    caption = f"📸 <b>{title}</b> ({index + 1}/{len(portfolio)})\n\n{description}"
+    
+    prev_text = "◀️ Предыдущий" if user_lang == "ru" else "◀️ Oldingi"
+    next_text = "Следующий ▶️" if user_lang == "ru" else "Keyingi ▶️"
+    back_text = "🔙 Главное меню" if user_lang == "ru" else "Asosiy menyu 🔙"
+    
+    builder = InlineKeyboardBuilder()
+    nav_buttons = []
+    if len(portfolio) > 1:
+        nav_buttons.append(InlineKeyboardButton(text=prev_text, callback_data="port_carousel_prev"))
+        nav_buttons.append(InlineKeyboardButton(text=next_text, callback_data="port_carousel_next"))
+        
+    if nav_buttons:
+        builder.row(*nav_buttons)
+        
+    builder.row(InlineKeyboardButton(text=back_text, callback_data="port_carousel_back"))
+    
+    reply_markup = builder.as_markup()
+    image_url = item.get("image")
+    
+    img_bytes = None
+    if image_url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as resp:
+                    if resp.status == 200:
+                        img_bytes = await resp.read()
+        except Exception as e:
+            logger.error(f"Failed to download portfolio image: {e}")
+
+    if img_bytes:
+        photo_file = BufferedInputFile(img_bytes, filename="portfolio_item.png")
+        if edit_media and message.photo:
+            from aiogram.types import InputMediaPhoto
+            await message.edit_media(
+                media=InputMediaPhoto(media=photo_file, caption=caption, parse_mode="HTML"),
+                reply_markup=reply_markup
+            )
+        else:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await message.answer_photo(
+                photo=photo_file,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+    else:
+        if edit_media and not message.photo:
+            await message.edit_text(text=caption, parse_mode="HTML", reply_markup=reply_markup)
+        else:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await message.answer(text=caption, parse_mode="HTML", reply_markup=reply_markup)
+
+@router.callback_query(F.data.in_(["port_carousel_prev", "port_carousel_next"]))
+async def portfolio_carousel_navigation(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    portfolio = data.get("portfolio_list")
+    index = data.get("current_portfolio_index", 0)
+    
+    if not portfolio:
+        await callback.answer("Ошибка данных.")
+        return
+        
+    if callback.data == "port_carousel_prev":
+        index = (index - 1) % len(portfolio)
+    else:
+        index = (index + 1) % len(portfolio)
+        
+    await state.update_data(current_portfolio_index=index)
+    await show_portfolio_carousel(callback.message, portfolio, index, edit_media=True)
+    await callback.answer()
+
+@router.callback_query(F.data == "port_carousel_back")
+async def portfolio_carousel_back(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    user_lang, is_manager = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    
+    main_menu = get_main_menu_keyboard(language=user_lang, is_manager=is_manager)
+    welcome_text = "Главное меню" if user_lang == "ru" else "Asosiy menyu"
+    await callback.message.answer(welcome_text, reply_markup=main_menu)
+    await callback.answer()
+
+@router.message(F.text.in_({"🛍 Сделать заказ", "🛍 Buyurtma berish"}))
 async def start_catalog(message: Message, state: FSMContext):
     await state.clear()
     user_lang, is_manager = await get_user_lang_and_manager(
@@ -255,10 +396,11 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
     title = product.get("title_uz") if (user_lang == "uz" and product.get("title_uz")) else product["title"]
     description = product.get("description_uz") if (user_lang == "uz" and product.get("description_uz")) else product["description"]
+    currency = await get_currency_display(user_lang)
     if user_lang == "ru":
-        caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Цена: {product['price']} руб."
+        caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Цена: {product['price']} {currency}"
     else:
-        caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Narxi: {product['price']} so'm"
+        caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Narxi: {product['price']} {currency}"
     prompt = _t(user_lang, "choose_size")
     caption = f"{caption}\n\n👇 {prompt}"
     markup = get_sizes_keyboard(sizes, language=user_lang)
@@ -333,11 +475,12 @@ async def show_print_position_carousel(message: Message, positions: list, index:
         message.chat.first_name or ""
     )
     pos = positions[index]
+    currency = await get_currency_display(user_lang)
     if user_lang == "ru":
         caption = (
             f"📍 <b>Место нанесения принта ({index + 1}/{len(positions)}):</b>\n\n"
             f"<b>Название:</b> {pos['name']}\n"
-            f"💵 <b>Наценка:</b> {pos['extra_price']} руб.\n\n"
+            f"💵 <b>Наценка:</b> {pos['extra_price']} {currency}\n\n"
             f"Выберите место нанесения, перелистывая варианты:"
         )
         prev_text = "◀️ Предыдущий"
@@ -348,7 +491,7 @@ async def show_print_position_carousel(message: Message, positions: list, index:
         caption = (
             f"📍 <b>Rasm bosiladigan joy ({index + 1}/{len(positions)}):</b>\n\n"
             f"<b>Nomi:</b> {pos['name']}\n"
-            f"💵 <b>Ustama narxi:</b> {pos['extra_price']} so'm\n\n"
+            f"💵 <b>Ustama narxi:</b> {pos['extra_price']} {currency}\n\n"
             f"Variantlarni ko'rib chiqib tanlang:"
         )
         prev_text = "◀️ Oldingi"
@@ -367,7 +510,10 @@ async def show_print_position_carousel(message: Message, positions: list, index:
         builder.row(*nav_buttons)
         
     builder.row(InlineKeyboardButton(text=select_text, callback_data=f"print_carousel_select_{pos['id']}"))
-    builder.row(InlineKeyboardButton(text=cancel_text, callback_data="cancel_action"))
+    builder.row(
+        InlineKeyboardButton(text=_t(user_lang, "back"), callback_data="back_to_colors"),
+        InlineKeyboardButton(text=cancel_text, callback_data="cancel_action")
+    )
     
     reply_markup = builder.as_markup()
     image_url = pos.get("image")
@@ -484,7 +630,7 @@ async def select_print_carousel_position(callback: CallbackQuery, state: FSMCont
     await callback.message.answer(
         prompt_text,
         parse_mode="HTML",
-        reply_markup=get_cancel_keyboard(language=user_lang)
+        reply_markup=get_back_cancel_keyboard(language=user_lang, back_callback_data="back_to_print")
     )
     await callback.answer()
 
@@ -635,7 +781,10 @@ async def ask_quantity(message: Message, state: FSMContext):
     for q in [1, 2, 3, 5, 10]:
         builder.button(text=str(q), callback_data=f"qty_{q}")
     builder.adjust(5)
-    builder.row(InlineKeyboardButton(text=_t(user_lang, "cancel"), callback_data="cancel_action"))
+    builder.row(
+        InlineKeyboardButton(text=_t(user_lang, "back"), callback_data="back_to_comment"),
+        InlineKeyboardButton(text=_t(user_lang, "cancel"), callback_data="cancel_action")
+    )
     
     if user_lang == "ru":
         prompt_text = (
@@ -741,6 +890,7 @@ async def show_cart(message: Message):
         return
         
     msg = "🛒 <b>Ваша корзина:</b>\n\n" if user_lang == "ru" else "🛒 <b>Sizning savatchangiz:</b>\n\n"
+    currency = await get_currency_display(user_lang)
     for idx, item in enumerate(items, 1):
         prod = item["product_details"]
         size = item["size_details"]["name"] if item["size_details"] else "—"
@@ -759,7 +909,7 @@ async def show_cart(message: Message):
                 f"📐 Размер: {size} | 🎨 Цвет: {color}\n"
                 f"📍 Принт: {print_pos}\n"
                 f"🔢 Кол-во: {item['quantity']} шт.\n"
-                f"💵 Стоимость: {item['total_price']} руб.\n\n"
+                f"💵 Стоимость: {item['total_price']} {currency}\n\n"
             )
         else:
             msg += (
@@ -767,11 +917,11 @@ async def show_cart(message: Message):
                 f"📐 O'lcham: {size} | 🎨 Rang: {color}\n"
                 f"📍 Bosma: {print_pos}\n"
                 f"🔢 Soni: {item['quantity']} dona\n"
-                f"💵 Narxi: {item['total_price']} so'm\n\n"
+                f"💵 Narxi: {item['total_price']} {currency}\n\n"
             )
         
     total_val = cart['total_cart_price']
-    total_msg = f"<b>Итого к оплате: {total_val} руб.</b>" if user_lang == "ru" else f"<b>Jami to'lov: {total_val} so'm</b>"
+    total_msg = f"<b>Итого к оплате: {total_val} {currency}</b>" if user_lang == "ru" else f"<b>Jami to'lov: {total_val} {currency}</b>"
     msg += total_msg
     
     await message.answer(msg, parse_mode="HTML", reply_markup=get_cart_keyboard(items, language=user_lang))
@@ -835,6 +985,7 @@ async def refresh_cart_message(callback: CallbackQuery):
         return
         
     msg = "🛒 <b>Ваша корзина:</b>\n\n" if user_lang == "ru" else "🛒 <b>Sizning savatchangiz:</b>\n\n"
+    currency = await get_currency_display(user_lang)
     for idx, item in enumerate(items, 1):
         prod = item["product_details"]
         size = item["size_details"]["name"] if item["size_details"] else "—"
@@ -853,7 +1004,7 @@ async def refresh_cart_message(callback: CallbackQuery):
                 f"📐 Размер: {size} | 🎨 Цвет: {color}\n"
                 f"📍 Принт: {print_pos}\n"
                 f"🔢 Кол-во: {item['quantity']} шт.\n"
-                f"💵 Стоимость: {item['total_price']} руб.\n\n"
+                f"💵 Стоимость: {item['total_price']} {currency}\n\n"
             )
         else:
             msg += (
@@ -861,11 +1012,11 @@ async def refresh_cart_message(callback: CallbackQuery):
                 f"📐 O'lcham: {size} | 🎨 Rang: {color}\n"
                 f"📍 Bosma: {print_pos}\n"
                 f"🔢 Soni: {item['quantity']} dona\n"
-                f"💵 Narxi: {item['total_price']} so'm\n\n"
+                f"💵 Narxi: {item['total_price']} {currency}\n\n"
             )
         
     total_val = cart['total_cart_price']
-    total_msg = f"<b>Итого к оплате: {total_val} руб.</b>" if user_lang == "ru" else f"<b>Jami to'lov: {total_val} so'm</b>"
+    total_msg = f"<b>Итого к оплате: {total_val} {currency}</b>" if user_lang == "ru" else f"<b>Jami to'lov: {total_val} {currency}</b>"
     msg += total_msg
     
     try:
@@ -894,7 +1045,8 @@ async def checkout_start(callback: CallbackQuery, state: FSMContext):
         
     total_price = float(cart.get("total_cart_price", 0))
     if total_price < min_amount:
-        alert_msg = f"Минимальная сумма заказа: {min_amount} руб. Добавьте еще товаров." if user_lang == "ru" else f"Minimal buyurtma summasi: {min_amount} so'm. Yana mahsulotlar qo'shing."
+        currency = await get_currency_display(user_lang)
+        alert_msg = f"Минимальная сумма заказа: {min_amount} {currency}. Добавьте еще товаров." if user_lang == "ru" else f"Minimal buyurtma summasi: {min_amount} {currency}. Yana mahsulotlar qo'shing."
         await callback.answer(alert_msg, show_alert=True)
         return
         
@@ -987,13 +1139,14 @@ async def process_checkout_address(message: Message, state: FSMContext):
     data = await state.get_data()
     cart = await api_client.get_cart(message.chat.id)
     
+    currency = await get_currency_display(user_lang)
     if user_lang == "ru":
         msg = (
             f"📋 <b>Проверьте данные вашего заказа:</b>\n\n"
             f"<b>Получатель:</b> {data['full_name']}\n"
             f"<b>Телефон:</b> {data['phone']}\n"
             f"<b>Доставка:</b> г. {data['city']}, {data['address']}\n\n"
-            f"<b>Сумма заказа:</b> {cart['total_cart_price']} руб.\n"
+            f"<b>Сумма заказа:</b> {cart['total_cart_price']} {currency}\n"
         )
     else:
         msg = (
@@ -1001,7 +1154,7 @@ async def process_checkout_address(message: Message, state: FSMContext):
             f"<b>Qabul qiluvchi:</b> {data['full_name']}\n"
             f"<b>Telefon:</b> {data['phone']}\n"
             f"<b>Etkazib berish:</b> {data['city']} sh., {data['address']}\n\n"
-            f"<b>Buyurtma summasi:</b> {cart['total_cart_price']} so'm\n"
+            f"<b>Buyurtma summasi:</b> {cart['total_cart_price']} {currency}\n"
         )
     
     await message.answer(msg, parse_mode="HTML", reply_markup=get_checkout_confirm_keyboard(language=user_lang))
@@ -1078,16 +1231,17 @@ async def show_payment_methods(message: Message, order: dict):
     )
     payment_methods = await api_client.get_payment_methods()
     
+    currency = await get_currency_display(user_lang)
     if user_lang == "ru":
         msg = (
             f"🎉 <b>Заказ № {order['order_number']} оформлен!</b>\n\n"
-            f"Сумма к оплате: <b>{order['total_price']} руб.</b>\n\n"
+            f"Сумма к оплате: <b>{order['total_price']} {currency}</b>\n\n"
             f"<b>Реквизиты для оплаты:</b>\n"
         )
     else:
         msg = (
             f"🎉 <b>Buyurtma № {order['order_number']} rasmiylashtirildi!</b>\n\n"
-            f"To'lov summasi: <b>{order['total_price']} so'm</b>\n\n"
+            f"To'lov summasi: <b>{order['total_price']} {currency}</b>\n\n"
             f"<b>To'lov rekvizitlari:</b>\n"
         )
     
@@ -1216,6 +1370,7 @@ async def show_my_orders(message: Message):
     builder = InlineKeyboardBuilder()
     has_pending = False
     
+    currency = await get_currency_display(user_lang)
     for order in orders:
         status_disp = order["status_display"]
         created = order["created_at"][:10]  # Take date only
@@ -1223,7 +1378,7 @@ async def show_my_orders(message: Message):
             msg += (
                 f"🔸 <b>Заказ:</b> {order['order_number']}\n"
                 f"📅 Дата: {created}\n"
-                f"💵 Сумма: {order['total_price']} руб.\n"
+                f"💵 Сумма: {order['total_price']} {currency}\n"
                 f"⚙️ Статус: <b>{status_disp}</b>\n\n"
             )
         else:
@@ -1245,7 +1400,7 @@ async def show_my_orders(message: Message):
             msg += (
                 f"🔸 <b>Buyurtma:</b> {order['order_number']}\n"
                 f"📅 Sana: {created}\n"
-                f"💵 Summa: {order['total_price']} so'm\n"
+                f"💵 Summa: {order['total_price']} {currency}\n"
                 f"⚙️ Holati: <b>{uz_status}</b>\n\n"
             )
             
@@ -1266,12 +1421,32 @@ async def show_my_orders(message: Message):
 # =====================================================================
 
 @router.callback_query(F.data.startswith("verify_receipt_"))
-async def admin_verify_receipt(callback: CallbackQuery):
+async def admin_verify_receipt(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     action = parts[2]      # 'approve' or 'reject'
     receipt_id = int(parts[3])
     
-    # Send verification request to Django API using the bot's token as authorization
+    if action == "reject":
+        await state.set_state(AdminStates.waiting_for_rejection_comment)
+        await state.update_data(
+            reject_receipt_id=receipt_id, 
+            reject_callback_message=callback.message
+        )
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="❌ Отклонить без комментария", callback_data=f"reject_no_comment_{receipt_id}")
+        builder.button(text="🔙 Отмена", callback_data="cancel_reject_action")
+        builder.adjust(1)
+        
+        await callback.message.reply(
+            "Пожалуйста, напишите причину отклонения чека (клиент получит это сообщение в уведомлении):\n\n"
+            "Или нажмите кнопку ниже, чтобы отклонить без комментария.",
+            reply_markup=builder.as_markup()
+        )
+        await callback.answer()
+        return
+
+    # For 'approve'
     res = await api_client.verify_receipt(
         receipt_id=receipt_id,
         action=action,
@@ -1283,9 +1458,7 @@ async def admin_verify_receipt(callback: CallbackQuery):
         logger.error(f"Receipt verification failed: {res}")
         return
         
-    status_text = "✅ Оплата подтверждена" if action == "approve" else "❌ Чек отклонен"
-    
-    # Update the admin's notification message to remove buttons and show decision
+    status_text = "✅ Оплата подтверждена"
     caption = callback.message.caption or callback.message.text or ""
     new_caption = f"{caption}\n\n<b>Решение: {status_text}</b>"
     
@@ -1294,7 +1467,88 @@ async def admin_verify_receipt(callback: CallbackQuery):
     else:
         await callback.message.edit_text(text=new_caption, parse_mode="HTML", reply_markup=None)
         
-    await callback.answer(f"Чек успешно { 'подтвержден' if action == 'approve' else 'отклонен' }.")
+    await callback.answer("Чек успешно подтвержден.")
+
+@router.callback_query(F.data.startswith("reject_no_comment_"))
+async def admin_reject_no_comment(callback: CallbackQuery, state: FSMContext):
+    receipt_id = int(callback.data.split("_")[3])
+    data = await state.get_data()
+    orig_msg = data.get("reject_callback_message")
+    await state.clear()
+    
+    res = await api_client.verify_receipt(
+        receipt_id=receipt_id,
+        action="reject",
+        token=settings.bot_token,
+        comment=None
+    )
+    
+    if not res or res.get("error"):
+        await callback.answer("Ошибка при обработке запроса.", show_alert=True)
+        return
+        
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    if orig_msg:
+        status_text = "❌ Чек отклонен"
+        caption = orig_msg.caption or orig_msg.text or ""
+        new_caption = f"{caption}\n\n<b>Решение: {status_text} (без комментария)</b>"
+        try:
+            if orig_msg.photo:
+                await orig_msg.edit_caption(caption=new_caption, parse_mode="HTML", reply_markup=None)
+            else:
+                await orig_msg.edit_text(text=new_caption, parse_mode="HTML", reply_markup=None)
+        except Exception as e:
+            logger.error(f"Failed to edit original message on reject no comment: {e}")
+            
+    await callback.answer("Чек отклонен без комментария.")
+
+@router.callback_query(F.data == "cancel_reject_action")
+async def admin_cancel_reject_action(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer("Действие отменено.")
+
+@router.message(AdminStates.waiting_for_rejection_comment)
+async def admin_rejection_comment_received(message: Message, state: FSMContext):
+    data = await state.get_data()
+    receipt_id = data.get("reject_receipt_id")
+    orig_msg = data.get("reject_callback_message")
+    
+    comment = message.text
+    await state.clear()
+    
+    res = await api_client.verify_receipt(
+        receipt_id=receipt_id,
+        action="reject",
+        token=settings.bot_token,
+        comment=comment
+    )
+    
+    if not res or res.get("error"):
+        await message.answer("Ошибка при обработке запроса.")
+        return
+        
+    # Update original message to remove buttons and show decision
+    status_text = "❌ Чек отклонен"
+    caption = orig_msg.caption or orig_msg.text or ""
+    new_caption = f"{caption}\n\n<b>Решение: {status_text} (Причина: {comment})</b>"
+    
+    try:
+        if orig_msg.photo:
+            await orig_msg.edit_caption(caption=new_caption, parse_mode="HTML", reply_markup=None)
+        else:
+            await orig_msg.edit_text(text=new_caption, parse_mode="HTML", reply_markup=None)
+    except Exception as e:
+        logger.error(f"Failed to edit original message: {e}")
+        
+    await message.answer(f"Чек отклонен с комментарием: {comment}")
 
 # =====================================================================
 # MANAGER / ADMIN HANDLERS
@@ -1329,25 +1583,22 @@ async def manager_client_mode(message: Message):
 
 @router.message(F.text == "📋 Новые заказы")
 async def manager_new_orders(message: Message):
-    # Check permission
-    client_info = await api_client.register_client(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    if not client_info or not client_info.get("is_manager"):
+    user_lang, is_manager = await get_user_lang_and_manager(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if not is_manager:
         await message.answer("Доступ запрещен.")
         return
-
-    # Fetch orders waiting for payment or verification
+        
     orders = await api_client.get_orders(message.from_user.id)
     if not orders or (isinstance(orders, dict) and orders.get("error")):
         await message.answer("Ошибка получения списка заказов.")
         return
-
-    # Filter to display new orders (WAITING_PAYMENT and RECEIPT_PENDING)
+        
     new_orders = [o for o in orders if o["status"] in ["WAITING_PAYMENT", "RECEIPT_PENDING"]]
-    
     if not new_orders:
         await message.answer("Нет новых заказов, ожидающих оплаты или проверки чеков.")
         return
-
+        
+    currency = await get_currency_display(user_lang)
     msg = "📋 <b>Новые заказы ({})</b>\n\n".format(len(new_orders))
     for order in new_orders:
         status_disp = order["status_display"]
@@ -1357,33 +1608,29 @@ async def manager_new_orders(message: Message):
             f"📅 Дата: {created}\n"
             f"👤 Клиент: {order['full_name']} (@{order['client_details']['username'] or ''})\n"
             f"📞 Телефон: {order['phone']}\n"
-            f"💵 Сумма: {order['total_price']} руб.\n"
+            f"💵 Сумма: {order['total_price']} {currency}\n"
             f"⚙️ Статус: <b>{status_disp}</b>\n\n"
         )
-    
     await message.answer(msg, parse_mode="HTML")
 
 @router.message(F.text == "📦 В работе")
 async def manager_active_orders(message: Message):
-    # Check permission
-    client_info = await api_client.register_client(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    if not client_info or not client_info.get("is_manager"):
+    user_lang, is_manager = await get_user_lang_and_manager(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if not is_manager:
         await message.answer("Доступ запрещен.")
         return
-
-    # Fetch all orders
+        
     orders = await api_client.get_orders(message.from_user.id)
     if not orders or (isinstance(orders, dict) and orders.get("error")):
         await message.answer("Ошибка получения списка заказов.")
         return
-
-    # Filter to active/processing orders
+        
     active_orders = [o for o in orders if o["status"] in ["PAID", "IN_PRODUCTION", "PRINTED", "PACKED", "SHIPPED"]]
-    
     if not active_orders:
         await message.answer("Нет активных заказов в производстве/доставке.")
         return
-
+        
+    currency = await get_currency_display(user_lang)
     msg = "📦 <b>Активные заказы в работе ({})</b>\n\n".format(len(active_orders))
     for order in active_orders:
         status_disp = order["status_display"]
@@ -1392,17 +1639,15 @@ async def manager_active_orders(message: Message):
             f"🔸 <b>Заказ:</b> {order['order_number']}\n"
             f"📅 Дата: {created}\n"
             f"👤 Клиент: {order['full_name']} (@{order['client_details']['username'] or ''})\n"
-            f"💵 Сумма: {order['total_price']} руб.\n"
+            f"💵 Сумма: {order['total_price']} {currency}\n"
             f"⚙️ Статус: <b>{status_disp}</b>\n\n"
         )
-    
     await message.answer(msg, parse_mode="HTML")
 
 @router.message(F.text == "📊 Статистика")
 async def manager_stats(message: Message):
-    # Check permission
-    client_info = await api_client.register_client(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    if not client_info or not client_info.get("is_manager"):
+    user_lang, is_manager = await get_user_lang_and_manager(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if not is_manager:
         await message.answer("Доступ запрещен.")
         return
 
@@ -1411,15 +1656,15 @@ async def manager_stats(message: Message):
         await message.answer("Ошибка получения финансовой статистики.")
         return
 
+    currency = await get_currency_display(user_lang)
     msg = (
         f"📊 <b>Финансовая статистика магазина</b>\n\n"
         f"👥 Всего зарегистрировано клиентов: <b>{stats['total_clients']}</b>\n"
         f"📦 Всего оформлено заказов: <b>{stats['total_orders']}</b>\n\n"
-        f"💵 Суммарная выручка (оплаченные): <b>{stats['revenue']:.2f} руб.</b>\n"
+        f"💵 Суммарная выручка (оплаченные): <b>{stats['revenue']:.2f} {currency}</b>\n"
         f"🧾 Чеков ожидает проверки: <b>{stats['new_receipts']}</b>\n"
         f"⚙️ Заказов в производстве: <b>{stats['in_production']}</b>"
     )
-    
     await message.answer(msg, parse_mode="HTML")
 
 
@@ -1520,5 +1765,226 @@ async def other_services_phone_receive(message: Message, state: FSMContext):
                 message.from_user.first_name
             )
         )
+
+# =====================================================================
+# BACK NAVIGATION HANDLERS
+# =====================================================================
+
+@router.callback_query(F.data == "back_to_products")
+async def back_to_products(callback: CallbackQuery, state: FSMContext):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+    data = await state.get_data()
+    category_id = data.get("category_id")
+    if not category_id:
+        await back_to_categories(callback, state)
+        return
+        
+    products = await api_client.get_products(category_id)
+    if not products or (isinstance(products, dict) and products.get("error")):
+        await callback.answer("Ошибка при возврате к списку товаров.")
+        return
+        
+    await state.set_state(OrderingStates.product)
+    currency = await get_currency_display(user_lang)
+    await callback.message.edit_text(
+        _t(user_lang, "choose_product"), 
+        reply_markup=get_products_keyboard(products, category_id, language=user_lang, currency=currency)
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_sizes")
+async def back_to_sizes(callback: CallbackQuery, state: FSMContext):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+    data = await state.get_data()
+    product_id = data.get("product_id")
+    if not product_id:
+        await callback.answer("Ошибка.")
+        return
+        
+    product = await api_client.get_product_detail(product_id)
+    if not product or (isinstance(product, dict) and product.get("error")):
+        await callback.answer("Ошибка при возврате.")
+        return
+        
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    await state.set_state(OrderingStates.size)
+    
+    title = product.get("title_uz") if (user_lang == "uz" and product.get("title_uz")) else product["title"]
+    description = product.get("description_uz") if (user_lang == "uz" and product.get("description_uz")) else product["description"]
+    currency = await get_currency_display(user_lang)
+    caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Цена: {product['price']} {currency}" if user_lang == "ru" else f"👕 <b>{title}</b>\n\n{description}\n\n💵 Narxi: {product['price']} {currency}"
+    
+    reply_markup = get_sizes_keyboard(product.get("sizes", []), language=user_lang)
+    
+    img_bytes = None
+    if product.get("image"):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(product["image"]) as resp:
+                    if resp.status == 200:
+                        img_bytes = await resp.read()
+        except Exception as e:
+            logger.error(f"Failed to download image on back: {e}")
+            
+    if img_bytes:
+        await callback.message.answer_photo(
+            photo=BufferedInputFile(img_bytes, filename="product.png"),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+    else:
+        await callback.message.answer(
+            text=caption,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_colors")
+async def back_to_colors(callback: CallbackQuery, state: FSMContext):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+    data = await state.get_data()
+    product_id = data.get("product_id")
+    if not product_id:
+        await callback.answer("Ошибка.")
+        return
+        
+    product = await api_client.get_product_detail(product_id)
+    if not product or (isinstance(product, dict) and product.get("error")):
+        await callback.answer("Ошибка при возврате.")
+        return
+        
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    await state.set_state(OrderingStates.color)
+    await callback.message.answer(
+        _t(user_lang, "choose_color"),
+        reply_markup=get_colors_keyboard(product.get("colors", []), language=user_lang)
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_print")
+async def back_to_print(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    positions = data.get("print_positions_list")
+    index = data.get("current_print_index", 0)
+    
+    if not positions:
+        await callback.answer("Ошибка.")
+        return
+        
+    await state.set_state(OrderingStates.print_position)
+    await show_print_position_carousel(callback.message, positions, index, edit_media=False)
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_design1")
+async def back_to_design1(callback: CallbackQuery, state: FSMContext):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+    data = await state.get_data()
+    pos = data.get("print_position_data")
+    
+    requires_multiple = pos.get("requires_multiple_designs", False) if pos else False
+    if user_lang == "ru":
+        prompt_text = (
+            "Загрузите ваш макет/изображение для принта (<b>Макет 1 / Спереди</b>):\n\n" if requires_multiple else
+            "Загрузите ваш макет/изображение для принта:\n\n"
+        )
+        prompt_text += (
+            "Поддерживаемые форматы: JPG, PNG, PDF, SVG.\n"
+            "Пожалуйста, отправьте файл как <b>Документ</b> (без сжатия) или как фото."
+        )
+    else:
+        prompt_text = (
+            "Rasm faylini yuklang (<b>1-rasm / Old tomoni</b>):\n\n" if requires_multiple else
+            "Rasm faylini yuklang:\n\n"
+        )
+        prompt_text += (
+            "Qo'llab-quvvatlanadigan formatlar: JPG, PNG, PDF, SVG.\n"
+            "Iltimos, faylni <b>Hujjat</b> ko'rinishida (siquvsiz) yoki rasm sifatida yuboring."
+        )
+        
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    await state.set_state(OrderingStates.design_file)
+    await callback.message.answer(
+        prompt_text,
+        parse_mode="HTML",
+        reply_markup=get_back_cancel_keyboard(language=user_lang, back_callback_data="back_to_print")
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_designs")
+async def back_to_designs(callback: CallbackQuery, state: FSMContext):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+    data = await state.get_data()
+    pos = data.get("print_position_data")
+    
+    requires_multiple = pos.get("requires_multiple_designs", False) if pos else False
+    
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    if requires_multiple:
+        await state.set_state(OrderingStates.design_file_2)
+        await callback.message.answer(
+            _t(user_lang, "upload_design_2"),
+            reply_markup=get_design_2_keyboard(language=user_lang)
+        )
+    else:
+        await back_to_design1(callback, state)
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_comment")
+async def back_to_comment(callback: CallbackQuery, state: FSMContext):
+    user_lang, _ = await get_user_lang_and_manager(
+        callback.from_user.id,
+        callback.from_user.username,
+        callback.from_user.first_name
+    )
+    
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    await state.set_state(OrderingStates.comment)
+    await callback.message.answer(
+        _t(user_lang, "enter_comment"),
+        reply_markup=get_comment_skip_keyboard(language=user_lang)
+    )
+    await callback.answer()
 
 

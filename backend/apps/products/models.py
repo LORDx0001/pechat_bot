@@ -77,3 +77,18 @@ class PrintPosition(models.Model):
 
     def __str__(self):
         return f"{self.name} (+{self.extra_price})"
+
+class PortfolioItem(models.Model):
+    title = models.CharField(max_length=200, verbose_name="Название")
+    title_uz = models.CharField(max_length=200, blank=True, null=True, verbose_name="Название (UZ)")
+    description = models.TextField(blank=True, verbose_name="Описание")
+    description_uz = models.TextField(blank=True, null=True, verbose_name="Описание (UZ)")
+    image = models.ImageField(upload_to="portfolio/", verbose_name="Фото готового изделия")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+
+    class Meta:
+        verbose_name = "Готовое изделие (Портфолио)"
+        verbose_name_plural = "Готовые изделия (Портфолио)"
+
+    def __str__(self):
+        return self.title

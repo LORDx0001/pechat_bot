@@ -1,6 +1,9 @@
 from rest_framework import generics
-from .models import Category, Product, PrintPosition
-from .serializers import CategorySerializer, ProductListSerializer, ProductDetailSerializer, PrintPositionSerializer
+from .models import Category, Product, PrintPosition, PortfolioItem
+from .serializers import (
+    CategorySerializer, ProductListSerializer, ProductDetailSerializer, 
+    PrintPositionSerializer, PortfolioItemSerializer
+)
 
 class CategoryListView(generics.ListAPIView):
     queryset = Category.objects.filter(is_active=True)
@@ -23,3 +26,7 @@ class ProductDetailView(generics.RetrieveAPIView):
 class PrintPositionListView(generics.ListAPIView):
     queryset = PrintPosition.objects.all()
     serializer_class = PrintPositionSerializer
+
+class PortfolioItemListView(generics.ListAPIView):
+    queryset = PortfolioItem.objects.all().order_by('-created_at')
+    serializer_class = PortfolioItemSerializer

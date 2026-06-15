@@ -26,3 +26,6 @@ class SupportStates(StatesGroup):
 class OtherServicesStates(StatesGroup):
     comment = State()
     phone = State()
+
+class AdminStates(StatesGroup):
+    waiting_for_rejection_comment = State()

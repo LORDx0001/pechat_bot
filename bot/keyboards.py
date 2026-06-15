@@ -52,6 +52,14 @@ def get_cancel_keyboard(language: str = "ru", cancel_text: str = None) -> Inline
     builder.button(text=text, callback_data="cancel_action")
     return builder.as_markup()
 
+def get_back_cancel_keyboard(language: str = "ru", back_callback_data: str = "back_action", cancel_text: str = None) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=_t(language, "back"), callback_data=back_callback_data),
+        InlineKeyboardButton(text=cancel_text or _t(language, "cancel"), callback_data="cancel_action")
+    )
+    return builder.as_markup()
+
 def get_share_phone_keyboard(language: str = "ru") -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.row(
@@ -71,11 +79,13 @@ def get_categories_keyboard(categories: list, language: str = "ru") -> InlineKey
     builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
     return builder.as_markup()
 
-def get_products_keyboard(products: list, category_id: int, language: str = "ru") -> InlineKeyboardMarkup:
+def get_products_keyboard(products: list, category_id: int, language: str = "ru", currency: str = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if not currency:
+        currency = "сум" if language == "ru" else "so'm"
     for prod in products:
         title = prod.get("title_uz") if (language == "uz" and prod.get("title_uz")) else prod["title"]
-        price_text = f"{title} - {prod['price']} руб" if language == "ru" else f"{title} - {prod['price']} so'm"
+        price_text = f"{title} - {prod['price']} {currency}"
         builder.button(text=price_text, callback_data=f"prod_{prod['id']}")
     builder.adjust(1)
     builder.row(
@@ -89,7 +99,10 @@ def get_sizes_keyboard(sizes: list, language: str = "ru") -> InlineKeyboardMarku
     for s in sizes:
         builder.button(text=s["name"], callback_data=f"size_{s['id']}")
     builder.adjust(3)
-    builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
+    builder.row(
+        InlineKeyboardButton(text=_t(language, "back"), callback_data="back_to_products"),
+        InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action")
+    )
     return builder.as_markup()
 
 def get_colors_keyboard(colors: list, language: str = "ru") -> InlineKeyboardMarkup:
@@ -98,14 +111,19 @@ def get_colors_keyboard(colors: list, language: str = "ru") -> InlineKeyboardMar
         name = c.get("name_uz") if (language == "uz" and c.get("name_uz")) else c["name"]
         builder.button(text=name, callback_data=f"color_{c['id']}")
     builder.adjust(2)
-    builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
+    builder.row(
+        InlineKeyboardButton(text=_t(language, "back"), callback_data="back_to_sizes"),
+        InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action")
+    )
     return builder.as_markup()
 
-def get_print_positions_keyboard(positions: list, language: str = "ru") -> InlineKeyboardMarkup:
+def get_print_positions_keyboard(positions: list, language: str = "ru", currency: str = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if not currency:
+        currency = "сум" if language == "ru" else "so'm"
     for pos in positions:
         name = pos.get("name_uz") if (language == "uz" and pos.get("name_uz")) else pos["name"]
-        text = f"{name} (+{pos['extra_price']} руб)" if language == "ru" else f"{name} (+{pos['extra_price']} so'm)"
+        text = f"{name} (+{pos['extra_price']} {currency})"
         builder.button(text=text, callback_data=f"print_{pos['id']}")
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
@@ -114,7 +132,10 @@ def get_print_positions_keyboard(positions: list, language: str = "ru") -> Inlin
 def get_comment_skip_keyboard(language: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=_t(language, "skip"), callback_data="skip_comment")
-    builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
+    builder.row(
+        InlineKeyboardButton(text=_t(language, "back"), callback_data="back_to_designs"),
+        InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action")
+    )
     return builder.as_markup()
 
 def get_cart_keyboard(cart_items: list, language: str = "ru") -> InlineKeyboardMarkup:
@@ -149,5 +170,8 @@ def get_pay_payment_keyboard(order_id: int, language: str = "ru") -> InlineKeybo
 def get_design_2_keyboard(language: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=_t(language, "use_same_design"), callback_data="skip_design_2")
-    builder.row(InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action"))
+    builder.row(
+        InlineKeyboardButton(text=_t(language, "back"), callback_data="back_to_design1"),
+        InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action")
+    )
     return builder.as_markup()

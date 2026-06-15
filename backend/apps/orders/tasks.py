@@ -6,7 +6,7 @@ from django.conf import settings
 from apps.users.models import StoreSettings, Client
 from apps.orders.models import Order, Receipt
 
-def _send_telegram_notification_task_impl(notification_type, order_id, receipt_id=None):
+def _send_telegram_notification_task_impl(notification_type, order_id, receipt_id=None, comment=None):
     bot_token = settings.TELEGRAM_BOT_TOKEN
     if not bot_token:
         print("TELEGRAM_BOT_TOKEN is not configured in Django settings.")
@@ -53,9 +53,11 @@ def _send_telegram_notification_task_impl(notification_type, order_id, receipt_i
             if item.comment:
                 items_summary += f"  📝 <b>Описание:</b> {item.comment}\n"
             if item.design_file:
-                items_summary += f"  🖼 <a href='http://127.0.0.1:8000{item.design_file.url}'>Скачать макет 1</a>\n"
+                backend_url = os.getenv('BACKEND_URL', 'https://pechat.lordx.uz').rstrip('/')
+                items_summary += f"  🖼 <a href='{backend_url}{item.design_file.url}'>Скачать макет 1</a>\n"
             if item.design_file_2:
-                items_summary += f"  🖼 <a href='http://127.0.0.1:8000{item.design_file_2.url}'>Скачать макет 2</a>\n"
+                backend_url = os.getenv('BACKEND_URL', 'https://pechat.lordx.uz').rstrip('/')
+                items_summary += f"  🖼 <a href='{backend_url}{item.design_file_2.url}'>Скачать макет 2</a>\n"
             items_summary += "\n"
 
         message = (
@@ -67,7 +69,7 @@ def _send_telegram_notification_task_impl(notification_type, order_id, receipt_i
             f"<b>Адрес:</b> {order.city}, {order.address}\n"
             f"<b>Сумма:</b> {order.total_price} {store_settings.currency}\n\n"
             f"📋 <b>Состав заказа:</b>\n{items_summary}"
-            f"🔗 <a href='http://127.0.0.1:8000/admin/orders/order/{order.id}/change/'>Открыть заказ в админке</a>"
+            f"🔗 <a href='{backend_url}/admin/orders/order/{order.id}/change/'>Открыть заказ в админке</a>"
         )
         
         # Do not notify managers on new_order; wait until payment receipt is uploaded.
@@ -116,9 +118,11 @@ def _send_telegram_notification_task_impl(notification_type, order_id, receipt_i
             if item.comment:
                 items_summary += f"  📝 <b>Описание:</b> {item.comment}\n"
             if item.design_file:
-                items_summary += f"  🖼 <a href='http://127.0.0.1:8000{item.design_file.url}'>Скачать макет 1</a>\n"
+                backend_url = os.getenv('BACKEND_URL', 'https://pechat.lordx.uz').rstrip('/')
+                items_summary += f"  🖼 <a href='{backend_url}{item.design_file.url}'>Скачать макет 1</a>\n"
             if item.design_file_2:
-                items_summary += f"  🖼 <a href='http://127.0.0.1:8000{item.design_file_2.url}'>Скачать макет 2</a>\n"
+                backend_url = os.getenv('BACKEND_URL', 'https://pechat.lordx.uz').rstrip('/')
+                items_summary += f"  🖼 <a href='{backend_url}{item.design_file_2.url}'>Скачать макет 2</a>\n"
             items_summary += "\n"
 
         message = (
@@ -130,7 +134,7 @@ def _send_telegram_notification_task_impl(notification_type, order_id, receipt_i
             f"<b>Адрес:</b> {order.city}, {order.address}\n"
             f"<b>Сумма:</b> {order.total_price} {store_settings.currency}\n\n"
             f"📋 <b>Состав заказа:</b>\n{items_summary}"
-            f"🔗 <a href='http://127.0.0.1:8000/admin/orders/order/{order.id}/change/'>Открыть заказ в админке</a>"
+            f"🔗 <a href='{backend_url}/admin/orders/order/{order.id}/change/'>Открыть заказ в админке</a>"
         )
         
         inline_keyboard = {
@@ -206,13 +210,19 @@ def _send_telegram_notification_task_impl(notification_type, order_id, receipt_i
         if lang == "uz":
             client_message = (
                 f"❌ <b>{order.order_number}-sonli buyurtma uchun to'lov rad etildi.</b>\n"
-                f"Qo'llab-quvvatlash xizmati bilan bog'laning yoki chekni qayta yuboring."
             )
+            if comment:
+                client_message += f"\n<b>Sabab:</b> {comment}\n"
+            else:
+                client_message += f"\nQo'llab-quvvatlash xizmati bilan bog'laning yoki chekni qayta yuboring."
         else:
             client_message = (
                 f"❌ <b>Оплата по заказу {order.order_number} отклонена.</b>\n"
-                f"Пожалуйста, свяжитесь с поддержкой или отправьте верный чек повторно."
             )
+            if comment:
+                client_message += f"\n<b>Причина:</b> {comment}\n"
+            else:
+                client_message += f"\nПожалуйста, свяжитесь с поддержкой или отправьте верный чек повторно."
         requests.post(f"{base_url}/sendMessage", json={
             "chat_id": client_chat_id,
             "text": client_message,

@@ -248,7 +248,8 @@ class VerifyReceiptView(APIView):
             # Restore items to client's cart so they are not lost
             order.restore_items_to_cart()
             # Notify client payment rejected
-            send_telegram_notification_task.delay('payment_rejected', order.id)
+            comment = request.data.get('comment')
+            send_telegram_notification_task.delay('payment_rejected', order.id, comment=comment)
         else:
             return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
             

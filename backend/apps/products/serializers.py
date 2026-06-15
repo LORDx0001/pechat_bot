@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Size, Color, Product, ProductImage, PrintPosition
+from .models import Category, Size, Color, Product, ProductImage, PrintPosition, PortfolioItem
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -43,3 +43,8 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'id', 'category', 'title', 'title_uz', 'description', 'description_uz', 'image', 
             'price', 'sizes', 'colors', 'gallery_images', 'is_active', 'created_at'
         ]
+
+class PortfolioItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PortfolioItem
+        fields = ['id', 'title', 'title_uz', 'description', 'description_uz', 'image', 'created_at']
