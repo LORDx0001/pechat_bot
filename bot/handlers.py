@@ -1696,6 +1696,84 @@ async def manager_client_mode(message: Message):
         )
     )
 
+async def send_detailed_order_to_manager(message: Message, order: dict, currency: str, user_lang: str):
+    from aiogram.types import InputMediaPhoto
+    
+    status_disp = order["status_display"]
+    created = order["created_at"][:10]
+    
+    # Build items summary
+    items_summary = ""
+    for idx, item in enumerate(order.get("items", []), 1):
+        prod = item["product_details"]
+        size = item["size_details"]["name"] if item["size_details"] else "—"
+        
+        color_data = item["color_details"]
+        color = (color_data.get("name_uz") if (user_lang == "uz" and color_data.get("name_uz")) else color_data["name"]) if color_data else "—"
+        
+        print_pos_data = item["print_position_details"]
+        print_pos = (print_pos_data.get("name_uz") if (user_lang == "uz" and print_pos_data.get("name_uz")) else print_pos_data["name"]) if print_pos_data else "—"
+        
+        prod_title = prod.get("title_uz") if (user_lang == "uz" and prod.get("title_uz")) else prod["title"]
+        
+        items_summary += (
+            f"• <b>{prod_title}</b>\n"
+            f"  Размер: {size}, Цвет: {color}, Нанесение: {print_pos}\n"
+            f"  Кол-во: {item['quantity']} шт. × {item['item_price']} {currency}\n"
+        )
+        if item.get("comment"):
+            items_summary += f"  📝 <b>Описание:</b> {item['comment']}\n"
+        
+        backend_url = settings.backend_url.rstrip('/')
+        if item.get("design_file"):
+            items_summary += f"  🖼 <a href='{backend_url}{item['design_file']}'>Скачать макет 1</a>\n"
+        if item.get("design_file_2"):
+            items_summary += f"  🖼 <a href='{backend_url}{item['design_file_2']}'>Скачать макет 2</a>\n"
+        items_summary += "\n"
+
+    msg = (
+        f"🔸 <b>Заказ:</b> {order['order_number']}\n"
+        f"📅 Дата: {created}\n"
+        f"👤 Клиент: {order['full_name']} (@{order['client_details']['username'] or ''})\n"
+        f"📞 Телефон: {order['phone']}\n"
+        f"📍 Адрес: {order['city']}, {order['address']}\n"
+        f"💵 Сумма: {order['total_price']} {currency}\n"
+        f"⚙️ Статус: <b>{status_disp}</b>\n\n"
+        f"📋 <b>Состав заказа:</b>\n{items_summary}"
+    )
+    
+    # Build media list
+    media = []
+    
+    # Add design files/photos from items
+    for item in order.get("items", []):
+        if item.get("design_file"):
+            file_url = item["design_file"]
+            if not file_url.startswith("http"):
+                file_url = f"{settings.backend_url.rstrip('/')}{file_url}"
+            media.append(InputMediaPhoto(media=file_url))
+        if item.get("design_file_2"):
+            file_url = item["design_file_2"]
+            if not file_url.startswith("http"):
+                file_url = f"{settings.backend_url.rstrip('/')}{file_url}"
+            media.append(InputMediaPhoto(media=file_url))
+            
+    # Add receipt/check photos
+    for r in order.get("receipts", []):
+        if r.get("image"):
+            img_url = r["image"]
+            if not img_url.startswith("http"):
+                img_url = f"{settings.backend_url.rstrip('/')}{img_url}"
+            media.append(InputMediaPhoto(media=img_url))
+            
+    if media:
+        try:
+            await message.answer_media_group(media=media[:10]) # Limit to max 10 media items
+        except Exception as e:
+            logger.error(f"Failed to send order media: {e}")
+            
+    await message.answer(msg, parse_mode="HTML")
+
 @router.message(F.text == "📋 Новые заказы")
 async def manager_new_orders(message: Message):
     user_lang, is_manager = await get_user_lang_and_manager(message.from_user.id, message.from_user.username, message.from_user.first_name)
@@ -1714,19 +1792,11 @@ async def manager_new_orders(message: Message):
         return
         
     currency = await get_currency_display(user_lang)
-    msg = "📋 <b>Новые заказы ({})</b>\n\n".format(len(new_orders))
+    header = "📋 <b>Новые заказы ({})</b>:".format(len(new_orders))
+    await message.answer(header, parse_mode="HTML")
+    
     for order in new_orders:
-        status_disp = order["status_display"]
-        created = order["created_at"][:10]
-        msg += (
-            f"🔸 <b>Заказ:</b> {order['order_number']}\n"
-            f"📅 Дата: {created}\n"
-            f"👤 Клиент: {order['full_name']} (@{order['client_details']['username'] or ''})\n"
-            f"📞 Телефон: {order['phone']}\n"
-            f"💵 Сумма: {order['total_price']} {currency}\n"
-            f"⚙️ Статус: <b>{status_disp}</b>\n\n"
-        )
-    await message.answer(msg, parse_mode="HTML")
+        await send_detailed_order_to_manager(message, order, currency, user_lang)
 
 @router.message(F.text == "📦 В работе")
 async def manager_active_orders(message: Message):
@@ -1746,18 +1816,11 @@ async def manager_active_orders(message: Message):
         return
         
     currency = await get_currency_display(user_lang)
-    msg = "📦 <b>Активные заказы в работе ({})</b>\n\n".format(len(active_orders))
+    header = "📦 <b>Активные заказы в работе ({})</b>:".format(len(active_orders))
+    await message.answer(header, parse_mode="HTML")
+    
     for order in active_orders:
-        status_disp = order["status_display"]
-        created = order["created_at"][:10]
-        msg += (
-            f"🔸 <b>Заказ:</b> {order['order_number']}\n"
-            f"📅 Дата: {created}\n"
-            f"👤 Клиент: {order['full_name']} (@{order['client_details']['username'] or ''})\n"
-            f"💵 Сумма: {order['total_price']} {currency}\n"
-            f"⚙️ Статус: <b>{status_disp}</b>\n\n"
-        )
-    await message.answer(msg, parse_mode="HTML")
+        await send_detailed_order_to_manager(message, order, currency, user_lang)
 
 @router.message(F.text == "📊 Статистика")
 async def manager_stats(message: Message):

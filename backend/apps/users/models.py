@@ -37,7 +37,7 @@ class StoreSettings(SingletonModel):
     logo = models.ImageField(upload_to="settings/", null=True, blank=True, verbose_name="Логотип")
     contacts = models.TextField(blank=True, verbose_name="Контакты")
     manager_telegram = models.CharField(max_length=100, blank=True, help_text="Например: @manager_username или ссылка", verbose_name="Telegram менеджера")
-    currency = models.CharField(max_length=10, default="RUB", verbose_name="Валюта")
+    currency = models.CharField(max_length=10, default="UZS", verbose_name="Валюта")
     min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name="Минимальная сумма заказа")
     welcome_text = models.TextField(blank=True, verbose_name="Текст приветствия")
     welcome_text_uz = models.TextField(blank=True, verbose_name="Текст приветствия (UZ)")

@@ -17,7 +17,8 @@ class Command(BaseCommand):
         settings.about_text = "Мы занимаемся качественным пошивом и прямой цифровой печатью на текстиле.\nИспользуем только премиальный хлопок (пенье) и сертифицированные гипоаллергенные краски."
         settings.about_text_uz = "Biz kiyim-kechak tikish va to'g'ridan-to'g'ri raqamli chop etish bilan shug'ullanamiz.\nFaqat premium paxtadan foydalanamiz."
         settings.manager_telegram = "@print_manager"
-        settings.min_order_amount = 1000
+        settings.min_order_amount = 10000
+        settings.currency = "UZS"
         settings.save()
         self.stdout.write('- Настройки магазина успешно сконфигурированы.')
 
@@ -48,9 +49,9 @@ class Command(BaseCommand):
         # 4. Print Positions (Места нанесения)
         positions_data = [
             ('Спереди', 'Oldindan', 0, 'print_positions/front.png', False),
-            ('Сзади', 'Orqadan', 150, 'print_positions/back.png', False),
-            ('Спереди + Сзади', 'Oldindan + Orqadan', 300, 'print_positions/front_back.png', True),
-            ('На рукаве', 'Yengida', 100, 'print_positions/sleeve.png', False),
+            ('Сзади', 'Orqadan', 20000, 'print_positions/back.png', False),
+            ('Спереди + Сзади', 'Oldindan + Orqadan', 40000, 'print_positions/front_back.png', True),
+            ('На рукаве', 'Yengida', 15000, 'print_positions/sleeve.png', False),
         ]
         for name, name_uz, extra, img_path, req_mult in positions_data:
             pos, created = PrintPosition.objects.get_or_create(name=name, defaults={'name_uz': name_uz, 'extra_price': extra, 'image': img_path, 'requires_multiple_designs': req_mult})
@@ -64,15 +65,15 @@ class Command(BaseCommand):
 
         # 5. Payment Methods (Способы оплаты)
         PaymentMethod.objects.get_or_create(
-            title='Сбербанк',
-            card_number='4276 0000 0000 0000',
-            receiver_name='Иван И. И.',
+            title='Uzcard',
+            card_number='8600 1234 5678 9012',
+            receiver_name='Имя Получателя',
             is_active=True
         )
         PaymentMethod.objects.get_or_create(
-            title='Т-Банк (Тинькофф)',
-            card_number='2200 0000 0000 0000',
-            receiver_name='Иван И. И.',
+            title='Humo',
+            card_number='9860 1234 5678 9012',
+            receiver_name='Имя Получателя',
             is_active=True
         )
         self.stdout.write('- Реквизиты оплаты успешно настроены.')
@@ -100,7 +101,7 @@ class Command(BaseCommand):
                 'title_uz': 'Oversize Futbolka',
                 'description': 'Свободный современный крой, плотный 100% премиум хлопок (220 г/м²). Идеальна для любого принта.',
                 'description_uz': 'Erkin zamonaviy bichim, qalin 100% premium paxta (220 g/m²). Har qanday rasm bosish uchun ideal.',
-                'price': 1500,
+                'price': 120000,
                 'is_active': True
             }
         )
@@ -118,7 +119,7 @@ class Command(BaseCommand):
                 'title_uz': 'Premium Xudi',
                 'description': 'Худи с начесом, двойным глубоким капюшоном и удобным карманом "кенгуру". Плотность 340 г/м².',
                 'description_uz': 'Issiq xudi, chuqur kapyushon va qulay "kenguru" cho\'ntakli. Zichligi 340 g/m².',
-                'price': 3500,
+                'price': 300000,
                 'is_active': True
             }
         )
@@ -136,7 +137,7 @@ class Command(BaseCommand):
                 'title_uz': 'Classic Svitshot',
                 'description': 'Классический свитшот без капюшона. Плотный хлопковый трикотаж с петельчатой изнанкой.',
                 'description_uz': 'Kapyushonsiz klassik svitshot. Qalin paxtali trikotaj.',
-                'price': 2500,
+                'price': 220000,
                 'is_active': True
             }
         )
