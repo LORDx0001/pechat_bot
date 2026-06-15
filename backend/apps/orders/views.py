@@ -288,13 +288,23 @@ class ManagerStatsView(APIView):
 
 class CancelOrderView(APIView):
     def post(self, request, pk):
+        token = request.data.get('token')
+        from django.conf import settings
+        if token != settings.TELEGRAM_BOT_TOKEN and not (request.user and request.user.is_staff):
+            return Response({"error": "Unauthorized"}, status=status.HTTP_403_FORBIDDEN)
+
         order = get_object_or_404(Order, pk=pk)
-        if order.status not in ['NEW', 'WAITING_PAYMENT', 'RECEIPT_PENDING']:
+        if order.status in ['CANCELLED', 'DELIVERED', 'COMPLETED']:
             return Response({"error": "Cannot cancel this order"}, status=status.HTTP_400_BAD_REQUEST)
             
         order.restore_items_to_cart()
         order.status = 'CANCELLED'
         order.save()
+        
+        comment = request.data.get('comment')
+        from .tasks import send_telegram_notification_task
+        send_telegram_notification_task.delay('status_changed', order.id, comment=comment)
+        
         return Response({"status": "order cancelled and items restored"})
 
 class OtherServicesView(APIView):
@@ -314,4 +324,20 @@ class OtherServicesView(APIView):
         from .tasks import send_other_services_notification
         send_other_services_notification(client, comment, phone)
         return Response({"status": "success"})
+
+class UpdateOrderStatusView(APIView):
+    def post(self, request, pk):
+        token = request.data.get('token')
+        from django.conf import settings
+        if token != settings.TELEGRAM_BOT_TOKEN and not (request.user and request.user.is_staff):
+            return Response({"error": "Unauthorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+        status_val = request.data.get('status')
+        order = get_object_or_404(Order, pk=pk)
+        if status_val not in dict(Order.STATUS_CHOICES):
+            return Response({"error": "Invalid status"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        order.status = status_val
+        order.save()
+        return Response(OrderSerializer(order, context={'request': request}).data)
 

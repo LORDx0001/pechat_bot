@@ -232,6 +232,9 @@ async def show_portfolio_carousel(message: Message, portfolio: list, index: int,
     
     reply_markup = builder.as_markup()
     image_url = item.get("image")
+    if image_url and not (image_url.startswith("http://") or image_url.startswith("https://")):
+        backend_url = settings.backend_url.rstrip('/')
+        image_url = f"{backend_url}/{image_url.lstrip('/')}"
     
     img_bytes = None
     if image_url:
@@ -406,14 +409,11 @@ async def handle_ordering_control_buttons(message: Message, state: FSMContext) -
             return True
         elif current_state == OrderingStates.design_file.state:
             data = await state.get_data()
-            product_data = data.get("product_data")
-            positions = product_data.get("print_positions", [])
+            positions = data.get("print_positions_list") or []
+            await state.update_data(carousel_msg_id=None)
             await state.set_state(OrderingStates.print_position)
-            currency = await get_currency_display(user_lang)
-            await message.answer(
-                _t(user_lang, "choose_print_position"),
-                reply_markup=get_print_positions_reply_keyboard(positions, language=user_lang, currency=currency)
-            )
+            current_index = data.get("current_print_position_index", 0)
+            await show_print_position_carousel(message, state, current_index, positions, user_lang)
             return True
         elif current_state == OrderingStates.design_file_2.state:
             await state.set_state(OrderingStates.design_file)
@@ -613,6 +613,62 @@ async def proceed_to_colors_reply(message: Message, state: FSMContext, product: 
     await state.set_state(OrderingStates.color)
     await message.answer(_t(user_lang, "choose_color"), reply_markup=get_colors_reply_keyboard(colors, language=user_lang))
 
+def get_full_media_url(url_path: str) -> str:
+    if not url_path:
+        return ""
+    if url_path.startswith("http://") or url_path.startswith("https://"):
+        return url_path
+    backend_url = settings.backend_url.rstrip('/')
+    return f"{backend_url}/{url_path.lstrip('/')}"
+
+async def show_print_position_carousel(message: Message, state: FSMContext, index: int, positions: list, user_lang: str):
+    from bot.keyboards import get_print_positions_carousel_keyboard
+    from aiogram.types import InputMediaPhoto
+    
+    pos = positions[index]
+    currency = await get_currency_display(user_lang)
+    
+    name = pos.get("name_uz") if (user_lang == "uz" and pos.get("name_uz")) else pos["name"]
+    price_info = f"+{pos['extra_price']} {currency}"
+    
+    if user_lang == "ru":
+        caption = (
+            f"📍 <b>Место нанесения принта:</b> {name}\n"
+            f"💵 <b>Дополнительная стоимость:</b> {price_info}\n\n"
+            f"Используйте кнопки меню ниже, чтобы выбрать нужное расположение."
+        )
+    else:
+        caption = (
+            f"📍 <b>Rasm bosish joyi:</b> {name}\n"
+            f"💵 <b>Qo'shimcha narxi:</b> {price_info}\n\n"
+            f"Kerakli joylashuvni tanlash uchun quyidagi tugmalardan foydalaning."
+        )
+        
+    photo_url = get_full_media_url(pos.get("image"))
+    reply_markup = get_print_positions_carousel_keyboard(language=user_lang)
+    
+    data = await state.get_data()
+    carousel_msg_id = data.get("carousel_msg_id")
+    
+    if carousel_msg_id:
+        try:
+            await message.bot.edit_message_media(
+                chat_id=message.chat.id,
+                message_id=carousel_msg_id,
+                media=InputMediaPhoto(media=photo_url, caption=caption, parse_mode="HTML")
+            )
+            return
+        except Exception:
+            pass
+            
+    sent_msg = await message.answer_photo(
+        photo=photo_url,
+        caption=caption,
+        parse_mode="HTML",
+        reply_markup=reply_markup
+    )
+    await state.update_data(carousel_msg_id=sent_msg.message_id)
+
 async def proceed_to_print_positions_reply(message: Message, state: FSMContext):
     user_lang, _ = await get_user_lang_and_manager(
         message.from_user.id,
@@ -627,13 +683,9 @@ async def proceed_to_print_positions_reply(message: Message, state: FSMContext):
         return
         
     await state.set_state(OrderingStates.print_position)
-    await state.update_data(print_positions_list=positions)
+    await state.update_data(print_positions_list=positions, current_print_position_index=0)
     
-    currency = await get_currency_display(user_lang)
-    await message.answer(
-        _t(user_lang, "choose_print_position"),
-        reply_markup=get_print_positions_reply_keyboard(positions, language=user_lang, currency=currency)
-    )
+    await show_print_position_carousel(message, state, 0, positions, user_lang)
 
 @router.message(OrderingStates.color)
 async def select_color_message(message: Message, state: FSMContext):
@@ -666,60 +718,100 @@ async def select_color_message(message: Message, state: FSMContext):
 
 @router.message(OrderingStates.print_position)
 async def select_print_position_message(message: Message, state: FSMContext):
-    if await handle_ordering_control_buttons(message, state):
-        return
-        
     user_lang, _ = await get_user_lang_and_manager(
         message.from_user.id,
         message.from_user.username,
         message.from_user.first_name
     )
     
+    confirm_texts = ["✅ Подтвердить", "✅ Tasdiqlash"]
+    prev_texts = ["⬅️ Пред.", "⬅️ Oldingi"]
+    next_texts = ["➡️ След.", "➡️ Keyingi"]
+    back_texts = ["Назад", "Orqaga"]
+    cancel_texts = ["Отменить", "Bekor qilish", "❌ Отменить"]
+    
+    text = message.text.strip() if message.text else ""
+    
     data = await state.get_data()
-    positions = data.get("print_positions_list")
-    currency = await get_currency_display(user_lang)
+    positions = data.get("print_positions_list") or []
+    current_index = data.get("current_print_position_index", 0)
     
-    selected_pos = None
-    for pos in positions:
-        name = pos.get("name_uz") if (user_lang == "uz" and pos.get("name_uz")) else pos["name"]
-        text = f"{name} (+{pos['extra_price']} {currency})"
-        if message.text == text or message.text == name:
-            selected_pos = pos
-            break
-            
-    if not selected_pos:
-        await message.answer(_t(user_lang, "choose_print_position"))
+    if not positions:
+        await message.answer("Ошибка данных. Отмена.")
+        await state.clear()
         return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    if text in next_texts:
+        current_index = (current_index + 1) % len(positions)
+        await state.update_data(current_print_position_index=current_index)
+        await show_print_position_carousel(message, state, current_index, positions, user_lang)
         
-    print_position_id = selected_pos["id"]
-    await state.update_data(print_position_id=print_position_id, print_position_data=selected_pos)
-    
-    requires_multiple = selected_pos.get("requires_multiple_designs", False)
-    if user_lang == "ru":
-        prompt_text = (
-            "Загрузите ваш макет/изображение для принта (<b>Макет 1 / Спереди</b>):\n\n" if requires_multiple else
-            "Загрузите ваш макет/изображение для принта:\n\n"
+    elif text in prev_texts:
+        current_index = (current_index - 1) % len(positions)
+        await state.update_data(current_print_position_index=current_index)
+        await show_print_position_carousel(message, state, current_index, positions, user_lang)
+        
+    elif text in confirm_texts:
+        selected_pos = positions[current_index]
+        print_position_id = selected_pos["id"]
+        await state.update_data(print_position_id=print_position_id, print_position_data=selected_pos)
+        
+        requires_multiple = selected_pos.get("requires_multiple_designs", False)
+        if user_lang == "ru":
+            prompt_text = (
+                "Загрузите ваш макет/изображение для принта (<b>Макет 1 / Спереди</b>):\n\n" if requires_multiple else
+                "Загрузите ваш макет/изображение для принта:\n\n"
+            )
+            prompt_text += (
+                "Поддерживаемые форматы: JPG, PNG, PDF, SVG.\n"
+                "Пожалуйста, отправьте файл как <b>Документ</b> (без сжатия) или как фото."
+            )
+        else:
+            prompt_text = (
+                "Rasm faylini yuklang (<b>1-rasm / Old tomoni</b>):\n\n" if requires_multiple else
+                "Rasm faylini yuklang:\n\n"
+            )
+            prompt_text += (
+                "Qo'llab-quvvatlanadigan formatlar: JPG, PNG, PDF, SVG.\n"
+                "Iltimos, faylni <b>Hujjat</b> ko'rinishida (siquvsiz) yoki rasm sifatida yuboring."
+            )
+        
+        await message.answer(
+            prompt_text,
+            parse_mode="HTML",
+            reply_markup=get_design_file_reply_keyboard(language=user_lang, is_second=False)
         )
-        prompt_text += (
-            "Поддерживаемые форматы: JPG, PNG, PDF, SVG.\n"
-            "Пожалуйста, отправьте файл как <b>Документ</b> (без сжатия) или как фото."
+        await state.set_state(OrderingStates.design_file)
+        
+    elif text in back_texts or text == _t(user_lang, "back"):
+        await state.update_data(carousel_msg_id=None)
+        product_data = data.get("product_data") or {}
+        colors = product_data.get("colors", [])
+        
+        await state.set_state(OrderingStates.color)
+        await message.answer(
+            _t(user_lang, "choose_color"),
+            reply_markup=get_colors_reply_keyboard(colors, language=user_lang)
+        )
+        
+    elif text in cancel_texts or text == _t(user_lang, "cancel"):
+        await state.clear()
+        await message.answer(
+            _t(user_lang, "order_cancelled"),
+            reply_markup=await get_user_main_menu(
+                message.from_user.id,
+                message.from_user.username,
+                message.from_user.first_name
+            )
         )
     else:
-        prompt_text = (
-            "Rasm faylini yuklang (<b>1-rasm / Old tomoni</b>):\n\n" if requires_multiple else
-            "Rasm faylini yuklang:\n\n"
-        )
-        prompt_text += (
-            "Qo'llab-quvvatlanadigan formatlar: JPG, PNG, PDF, SVG.\n"
-            "Iltimos, faylni <b>Hujjat</b> ko'rinishida (siquvsiz) yoki rasm sifatida yuboring."
-        )
-        
-    await state.set_state(OrderingStates.design_file)
-    await message.answer(
-        prompt_text,
-        parse_mode="HTML",
-        reply_markup=get_design_file_reply_keyboard(language=user_lang, is_second=False)
-    )
+        await show_print_position_carousel(message, state, current_index, positions, user_lang)
+
 
 @router.message(OrderingStates.design_file, F.photo | F.document)
 async def process_design_file_message(message: Message, state: FSMContext):
@@ -1745,6 +1837,15 @@ async def send_detailed_order_to_manager(message: Message, order: dict, currency
     # Build media list
     media = []
     
+    # Add product images from items
+    for item in order.get("items", []):
+        prod = item.get("product_details")
+        if prod and prod.get("image"):
+            file_url = prod["image"]
+            if not file_url.startswith("http"):
+                file_url = f"{settings.backend_url.rstrip('/')}{file_url}"
+            media.append(InputMediaPhoto(media=file_url))
+
     # Add design files/photos from items
     for item in order.get("items", []):
         if item.get("design_file"):
@@ -1772,7 +1873,65 @@ async def send_detailed_order_to_manager(message: Message, order: dict, currency
         except Exception as e:
             logger.error(f"Failed to send order media: {e}")
             
-    await message.answer(msg, parse_mode="HTML")
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    
+    builder = InlineKeyboardBuilder()
+    status = order.get("status")
+    
+    # Receipts check action if status is RECEIPT_PENDING
+    if status == "RECEIPT_PENDING" and order.get("receipts"):
+        pending = [r for r in order["receipts"] if r.get("status") == "pending"]
+        if pending:
+            receipt_id = pending[0]["id"]
+            builder.row(
+                InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"verify_receipt_approve_{receipt_id}"),
+                InlineKeyboardButton(text="❌ Отклонить оплату", callback_data=f"verify_receipt_reject_{receipt_id}")
+            )
+            
+    # Status transition buttons
+    if status not in ["CANCELLED", "COMPLETED"]:
+        row_buttons = []
+        if status == "PAID":
+            row_buttons.append(InlineKeyboardButton(text="⚙️ В производство", callback_data=f"mgr_status_{order['id']}_IN_PRODUCTION"))
+        elif status == "IN_PRODUCTION":
+            row_buttons.append(InlineKeyboardButton(text="🖨️ Напечатан", callback_data=f"mgr_status_{order['id']}_PRINTED"))
+        elif status == "PRINTED":
+            row_buttons.append(InlineKeyboardButton(text="📦 Упакован", callback_data=f"mgr_status_{order['id']}_PACKED"))
+        elif status == "PACKED":
+            row_buttons.append(InlineKeyboardButton(text="🚚 Отправлен", callback_data=f"mgr_status_{order['id']}_SHIPPED"))
+        elif status == "SHIPPED":
+            row_buttons.append(InlineKeyboardButton(text="✅ Завершен / Доставлен", callback_data=f"mgr_status_{order['id']}_COMPLETED"))
+            
+        if row_buttons:
+            builder.row(*row_buttons)
+            
+        builder.row(
+            InlineKeyboardButton(text="❌ Отменить заказ", callback_data=f"mgr_cancel_{order['id']}"),
+            InlineKeyboardButton(text="🔄 Изменить статус", callback_data=f"mgr_force_status_{order['id']}")
+        )
+        
+    await message.answer(msg, parse_mode="HTML", reply_markup=builder.as_markup())
+
+async def list_orders_to_manager(message: Message, orders: list, title_text: str):
+    if not orders:
+        await message.answer(f"{title_text}: заказов нет.")
+        return
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    
+    builder = InlineKeyboardBuilder()
+    for o in orders[:60]:
+        btn_text = f"📦 №{o['order_number']} ({o['full_name']})"
+        builder.button(text=btn_text, callback_data=f"mgr_view_{o['id']}")
+    builder.adjust(1)
+    
+    await message.answer(
+        f"<b>{title_text} ({len(orders)}):</b>\n\nВыберите заказ для детального просмотра:",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
 
 @router.message(F.text == "📋 Новые заказы")
 async def manager_new_orders(message: Message):
@@ -1786,17 +1945,23 @@ async def manager_new_orders(message: Message):
         await message.answer("Ошибка получения списка заказов.")
         return
         
-    new_orders = [o for o in orders if o["status"] in ["WAITING_PAYMENT", "RECEIPT_PENDING"]]
-    if not new_orders:
-        await message.answer("Нет новых заказов, ожидающих оплаты или проверки чеков.")
+    new_orders = [o for o in orders if o["status"] in ["NEW", "WAITING_PAYMENT"]]
+    await list_orders_to_manager(message, new_orders, "📋 Новые заказы")
+
+@router.message(F.text == "📥 Заявки на подтверждение")
+async def manager_confirmation_requests(message: Message):
+    user_lang, is_manager = await get_user_lang_and_manager(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if not is_manager:
+        await message.answer("Доступ запрещен.")
         return
         
-    currency = await get_currency_display(user_lang)
-    header = "📋 <b>Новые заказы ({})</b>:".format(len(new_orders))
-    await message.answer(header, parse_mode="HTML")
-    
-    for order in new_orders:
-        await send_detailed_order_to_manager(message, order, currency, user_lang)
+    orders = await api_client.get_orders(message.from_user.id)
+    if not orders or (isinstance(orders, dict) and orders.get("error")):
+        await message.answer("Ошибка получения списка заказов.")
+        return
+        
+    pending_orders = [o for o in orders if o["status"] == "RECEIPT_PENDING"]
+    await list_orders_to_manager(message, pending_orders, "📥 Заявки на подтверждение")
 
 @router.message(F.text == "📦 В работе")
 async def manager_active_orders(message: Message):
@@ -1811,16 +1976,126 @@ async def manager_active_orders(message: Message):
         return
         
     active_orders = [o for o in orders if o["status"] in ["PAID", "IN_PRODUCTION", "PRINTED", "PACKED", "SHIPPED"]]
-    if not active_orders:
-        await message.answer("Нет активных заказов в производстве/доставке.")
+    await list_orders_to_manager(message, active_orders, "📦 Активные заказы в работе")
+
+@router.callback_query(F.data.startswith("mgr_view_"))
+async def manager_view_order(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[2])
+    order = await api_client.get_order_detail(order_id)
+    if not order or (isinstance(order, dict) and order.get("error")):
+        await callback.answer("Ошибка при загрузке деталей заказа.", show_alert=True)
+        return
+    
+    user_lang, _ = await get_user_lang_and_manager(callback.from_user.id)
+    currency = await get_currency_display(user_lang)
+    
+    await callback.answer()
+    await send_detailed_order_to_manager(callback.message, order, currency, user_lang)
+
+@router.callback_query(F.data.startswith("mgr_force_status_"))
+async def manager_force_status_options(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[3])
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⚙️ В производстве", callback_data=f"mgr_status_{order_id}_IN_PRODUCTION"))
+    builder.row(InlineKeyboardButton(text="🖨️ Напечатан", callback_data=f"mgr_status_{order_id}_PRINTED"))
+    builder.row(InlineKeyboardButton(text="📦 Упакован", callback_data=f"mgr_status_{order_id}_PACKED"))
+    builder.row(InlineKeyboardButton(text="🚚 Отправлен", callback_data=f"mgr_status_{order_id}_SHIPPED"))
+    builder.row(InlineKeyboardButton(text="✅ Завершен", callback_data=f"mgr_status_{order_id}_COMPLETED"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад к заказу", callback_data=f"mgr_view_{order_id}"))
+    builder.adjust(2)
+    
+    await callback.message.edit_text("Выберите новый статус для заказа:", reply_markup=builder.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("mgr_status_"))
+async def manager_update_status(callback: CallbackQuery):
+    parts = callback.data.split("_")
+    order_id = int(parts[2])
+    new_status = parts[3]
+    
+    res = await api_client.update_order_status(order_id, new_status, settings.bot_token)
+    if not res or (isinstance(res, dict) and res.get("error")):
+        await callback.answer("Ошибка обновления статуса.", show_alert=True)
         return
         
-    currency = await get_currency_display(user_lang)
-    header = "📦 <b>Активные заказы в работе ({})</b>:".format(len(active_orders))
-    await message.answer(header, parse_mode="HTML")
+    await callback.answer("Статус заказа успешно обновлен.")
     
-    for order in active_orders:
-        await send_detailed_order_to_manager(message, order, currency, user_lang)
+    order = await api_client.get_order_detail(order_id)
+    user_lang, _ = await get_user_lang_and_manager(callback.from_user.id)
+    currency = await get_currency_display(user_lang)
+    
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await send_detailed_order_to_manager(callback.message, order, currency, user_lang)
+
+@router.callback_query(F.data.startswith("mgr_cancel_"))
+async def manager_cancel_order_prompt(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split("_")[2])
+    await state.set_state(AdminStates.waiting_for_order_cancel_comment)
+    await state.update_data(
+        cancel_order_id=order_id,
+        cancel_callback_message=callback.message
+    )
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отменить без комментария", callback_data=f"cancel_order_no_comment_{order_id}")
+    builder.button(text="🔙 Назад", callback_data=f"mgr_view_{order_id}")
+    builder.adjust(1)
+    
+    await callback.message.reply(
+        "Пожалуйста, введите причину/комментарий для отмены заказа (клиент получит это сообщение в уведомлении):\n\n"
+        "Или нажмите кнопку ниже, чтобы отменить без комментария.",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("cancel_order_no_comment_"))
+async def manager_cancel_order_no_comment(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split("_")[4])
+    await state.clear()
+    
+    res = await api_client.cancel_order(order_id, token=settings.bot_token, comment=None)
+    if not res or (isinstance(res, dict) and res.get("error")):
+        await callback.answer("Ошибка при отмене заказа.", show_alert=True)
+        return
+        
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    await callback.answer("Заказ успешно отменен без комментария.")
+    
+    order = await api_client.get_order_detail(order_id)
+    user_lang, _ = await get_user_lang_and_manager(callback.from_user.id)
+    currency = await get_currency_display(user_lang)
+    await send_detailed_order_to_manager(callback.message, order, currency, user_lang)
+
+@router.message(AdminStates.waiting_for_order_cancel_comment)
+async def manager_cancel_order_comment_received(message: Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data.get("cancel_order_id")
+    
+    comment = message.text
+    await state.clear()
+    
+    res = await api_client.cancel_order(order_id, token=settings.bot_token, comment=comment)
+    if not res or (isinstance(res, dict) and res.get("error")):
+        await message.answer("Ошибка при отмене заказа.")
+        return
+        
+    await message.answer(f"Заказ успешно отменен с комментарием: {comment}")
+    
+    order = await api_client.get_order_detail(order_id)
+    user_lang, _ = await get_user_lang_and_manager(message.from_user.id)
+    currency = await get_currency_display(user_lang)
+    await send_detailed_order_to_manager(message, order, currency, user_lang)
 
 @router.message(F.text == "📊 Статистика")
 async def manager_stats(message: Message):

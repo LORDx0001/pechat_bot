@@ -250,11 +250,15 @@ def _send_telegram_notification_task_impl(notification_type, order_id, receipt_i
                 f"📦 <b>{order.order_number}-sonli buyurtma holati o'zgardi!</b>\n\n"
                 f"Yangi holat: <b>{status_display}</b>"
             )
+            if order.status == 'CANCELLED' and comment:
+                client_message += f"\n\n<b>Izoh:</b> {comment}"
         else:
             client_message = (
                 f"📦 <b>Статус заказа {order.order_number} изменился!</b>\n\n"
                 f"Новый статус: <b>{order.get_status_display()}</b>"
             )
+            if order.status == 'CANCELLED' and comment:
+                client_message += f"\n\n<b>Комментарий менеджера:</b> {comment}"
         requests.post(f"{base_url}/sendMessage", json={
             "chat_id": client_chat_id,
             "text": client_message,

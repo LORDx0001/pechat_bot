@@ -29,3 +29,4 @@ class OtherServicesStates(StatesGroup):
 
 class AdminStates(StatesGroup):
     waiting_for_rejection_comment = State()
+    waiting_for_order_cancel_comment = State()

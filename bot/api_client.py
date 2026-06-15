@@ -118,8 +118,13 @@ class APIClient:
         data.add_field("image", receipt_bytes, filename=filename)
         return await self._request("POST", f"/api/orders/{order_id}/upload-receipt/", data=data)
 
-    async def cancel_order(self, order_id: int):
-        return await self._request("POST", f"/api/orders/{order_id}/cancel/")
+    async def cancel_order(self, order_id: int, token: str = None, comment: str = None):
+        payload = {}
+        if token:
+            payload["token"] = token
+        if comment:
+            payload["comment"] = comment
+        return await self._request("POST", f"/api/orders/{order_id}/cancel/", json=payload)
 
     async def verify_receipt(self, receipt_id: int, action: str, token: str, comment: str = None):
         payload = {
@@ -129,6 +134,13 @@ class APIClient:
         if comment:
             payload["comment"] = comment
         return await self._request("POST", f"/api/receipts/{receipt_id}/verify/", json=payload)
+
+    async def update_order_status(self, order_id: int, status: str, token: str):
+        payload = {
+            "status": status,
+            "token": token
+        }
+        return await self._request("POST", f"/api/orders/{order_id}/status/", json=payload)
 
     async def get_manager_stats(self, telegram_id: int):
         return await self._request("GET", "/api/manager/stats/", params={"telegram_id": telegram_id})
