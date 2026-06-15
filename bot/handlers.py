@@ -12,7 +12,11 @@ from bot.keyboards import (
     get_colors_keyboard, get_print_positions_keyboard, get_comment_skip_keyboard,
     get_cart_keyboard, get_checkout_confirm_keyboard, get_pay_payment_keyboard,
     get_manager_menu_keyboard, get_design_2_keyboard, get_language_keyboard,
-    get_back_cancel_keyboard
+    get_back_cancel_keyboard,
+    get_categories_reply_keyboard, get_products_reply_keyboard,
+    get_sizes_reply_keyboard, get_colors_reply_keyboard,
+    get_print_positions_reply_keyboard, get_design_file_reply_keyboard,
+    get_comment_reply_keyboard, get_quantity_reply_keyboard
 )
 from bot.translations import _t
 from bot.states import OrderingStates, CheckoutStates, ReceiptStates, SupportStates, OtherServicesStates, AdminStates
@@ -326,62 +330,208 @@ async def start_catalog(message: Message, state: FSMContext):
         return
 
     await state.set_state(OrderingStates.category)
-    await message.answer(_t(user_lang, "choose_category"), reply_markup=get_categories_keyboard(categories, language=user_lang))
+    await message.answer(_t(user_lang, "choose_category"), reply_markup=get_categories_reply_keyboard(categories, language=user_lang))
 
-@router.callback_query(F.data.startswith("cat_"))
-async def select_category(callback: CallbackQuery, state: FSMContext):
+# Helper to check for cancel/back text buttons
+async def handle_ordering_control_buttons(message: Message, state: FSMContext) -> bool:
     user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
-    category_id = int(callback.data.split("_")[1])
+    text = message.text
+    
+    # Check cancel
+    if text in [_t("ru", "cancel"), _t("uz", "cancel")]:
+        await state.clear()
+        await message.answer(
+            _t(user_lang, "back_to_menu"),
+            reply_markup=await get_user_main_menu(
+                message.from_user.id,
+                message.from_user.username,
+                message.from_user.first_name
+            )
+        )
+        return True
+        
+    # Check back
+    if text in [_t("ru", "back"), _t("uz", "back")]:
+        current_state = await state.get_state()
+        if current_state == OrderingStates.product.state:
+            categories = await api_client.get_categories()
+            await state.set_state(OrderingStates.category)
+            await message.answer(
+                _t(user_lang, "choose_category"),
+                reply_markup=get_categories_reply_keyboard(categories, language=user_lang)
+            )
+            return True
+        elif current_state == OrderingStates.size.state:
+            data = await state.get_data()
+            category_id = data.get("category_id")
+            products = await api_client.get_products(category_id)
+            await state.set_state(OrderingStates.product)
+            currency = await get_currency_display(user_lang)
+            await message.answer(
+                _t(user_lang, "choose_product"),
+                reply_markup=get_products_reply_keyboard(products, language=user_lang, currency=currency)
+            )
+            return True
+        elif current_state == OrderingStates.color.state:
+            data = await state.get_data()
+            product_data = data.get("product_data")
+            sizes = product_data.get("sizes", [])
+            await state.set_state(OrderingStates.size)
+            await message.answer(
+                _t(user_lang, "choose_size"),
+                reply_markup=get_sizes_reply_keyboard(sizes, language=user_lang)
+            )
+            return True
+        elif current_state == OrderingStates.print_position.state:
+            data = await state.get_data()
+            product_data = data.get("product_data")
+            colors = product_data.get("colors", [])
+            if colors:
+                await state.set_state(OrderingStates.color)
+                await message.answer(
+                    _t(user_lang, "choose_color"),
+                    reply_markup=get_colors_reply_keyboard(colors, language=user_lang)
+                )
+            else:
+                sizes = product_data.get("sizes", [])
+                await state.set_state(OrderingStates.size)
+                await message.answer(
+                    _t(user_lang, "choose_size"),
+                    reply_markup=get_sizes_reply_keyboard(sizes, language=user_lang)
+                )
+            return True
+        elif current_state == OrderingStates.design_file.state:
+            data = await state.get_data()
+            product_data = data.get("product_data")
+            positions = product_data.get("print_positions", [])
+            await state.set_state(OrderingStates.print_position)
+            currency = await get_currency_display(user_lang)
+            await message.answer(
+                _t(user_lang, "choose_print_position"),
+                reply_markup=get_print_positions_reply_keyboard(positions, language=user_lang, currency=currency)
+            )
+            return True
+        elif current_state == OrderingStates.design_file_2.state:
+            await state.set_state(OrderingStates.design_file)
+            await message.answer(
+                _t(user_lang, "upload_design_1"),
+                reply_markup=get_design_file_reply_keyboard(language=user_lang, is_second=False)
+            )
+            return True
+        elif current_state == OrderingStates.comment.state:
+            data = await state.get_data()
+            print_position_id = data.get("print_position_id")
+            product_data = data.get("product_data")
+            
+            pos_details = next((p for p in product_data.get("print_positions", []) if p["id"] == print_position_id), None)
+            requires_multiple = pos_details.get("requires_multiple_designs", False) if pos_details else False
+            
+            if requires_multiple:
+                await state.set_state(OrderingStates.design_file_2)
+                await message.answer(
+                    _t(user_lang, "upload_design_2"),
+                    reply_markup=get_design_file_reply_keyboard(language=user_lang, is_second=True)
+                )
+            else:
+                await state.set_state(OrderingStates.design_file)
+                await message.answer(
+                    _t(user_lang, "upload_design_1"),
+                    reply_markup=get_design_file_reply_keyboard(language=user_lang, is_second=False)
+                )
+            return True
+        elif current_state == OrderingStates.quantity.state:
+            await state.set_state(OrderingStates.comment)
+            await message.answer(
+                _t(user_lang, "enter_comment"),
+                reply_markup=get_comment_reply_keyboard(language=user_lang)
+            )
+            return True
+            
+    return False
+
+@router.message(OrderingStates.category)
+async def select_category_message(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
+        
+    user_lang, _ = await get_user_lang_and_manager(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+    
+    categories = await api_client.get_categories()
+    selected_cat = None
+    for category in categories:
+        name = category.get("name_uz") if (user_lang == "uz" and category.get("name_uz")) else category["name"]
+        if message.text == name:
+            selected_cat = category
+            break
+            
+    if not selected_cat:
+        await message.answer(_t(user_lang, "choose_category"))
+        return
+        
+    category_id = selected_cat["id"]
     products = await api_client.get_products(category_id)
     
     if not products or (isinstance(products, dict) and products.get("error")):
         err_msg = "Ошибка загрузки товаров." if user_lang == "ru" else "Mahsulotlarni yuklashda xatolik."
-        await callback.answer(err_msg)
+        await message.answer(err_msg)
         return
         
     if not products:
         empty_msg = "В этой категории пока нет товаров." if user_lang == "ru" else "Ushbu kategoriyada hozircha mahsulotlar yo'q."
-        await callback.answer(empty_msg)
+        await message.answer(empty_msg)
         return
         
     await state.update_data(category_id=category_id)
     await state.set_state(OrderingStates.product)
     
-    await callback.message.edit_text(
+    currency = await get_currency_display(user_lang)
+    await message.answer(
         _t(user_lang, "choose_product"), 
-        reply_markup=get_products_keyboard(products, category_id, language=user_lang)
+        reply_markup=get_products_reply_keyboard(products, language=user_lang, currency=currency)
     )
-    await callback.answer()
 
-@router.callback_query(F.data == "back_to_categories")
-async def back_to_categories(callback: CallbackQuery, state: FSMContext):
+@router.message(OrderingStates.product)
+async def select_product_message(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
+        
     user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
-    categories = await api_client.get_categories()
-    await state.set_state(OrderingStates.category)
-    await callback.message.edit_text(_t(user_lang, "choose_category"), reply_markup=get_categories_keyboard(categories, language=user_lang))
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("prod_"))
-async def select_product(callback: CallbackQuery, state: FSMContext):
-    user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
-    )
-    product_id = int(callback.data.split("_")[1])
+    
+    data = await state.get_data()
+    category_id = data.get("category_id")
+    products = await api_client.get_products(category_id)
+    currency = await get_currency_display(user_lang)
+    
+    selected_prod = None
+    for prod in products:
+        title = prod.get("title_uz") if (user_lang == "uz" and prod.get("title_uz")) else prod["title"]
+        price_text = f"{title} - {prod['price']} {currency}"
+        if message.text == price_text or message.text == title:
+            selected_prod = prod
+            break
+            
+    if not selected_prod:
+        await message.answer(_t(user_lang, "choose_product"))
+        return
+        
+    product_id = selected_prod["id"]
     product = await api_client.get_product_detail(product_id)
     
     if not product or product.get("error"):
         err_msg = "Ошибка загрузки деталей товара." if user_lang == "ru" else "Mahsulot tafsilotlarini yuklashda xatolik."
-        await callback.answer(err_msg)
+        await message.answer(err_msg)
         return
         
     await state.update_data(product_id=product_id, product_data=product)
@@ -389,224 +539,162 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
     sizes = product.get("sizes", [])
     if not sizes:
         await state.update_data(size_id=None)
-        await proceed_to_colors(callback, state, product)
+        await proceed_to_colors_reply(message, state, product)
         return
         
     await state.set_state(OrderingStates.size)
-    await callback.message.delete()
+    
     title = product.get("title_uz") if (user_lang == "uz" and product.get("title_uz")) else product["title"]
     description = product.get("description_uz") if (user_lang == "uz" and product.get("description_uz")) else product["description"]
-    currency = await get_currency_display(user_lang)
+    
     if user_lang == "ru":
         caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Цена: {product['price']} {currency}"
     else:
         caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Narxi: {product['price']} {currency}"
+        
     prompt = _t(user_lang, "choose_size")
     caption = f"{caption}\n\n👇 {prompt}"
-    markup = get_sizes_keyboard(sizes, language=user_lang)
-
+    
     if product.get("image"):
         async with aiohttp.ClientSession() as session:
             async with session.get(product["image"]) as resp:
                 if resp.status == 200:
                     img_bytes = await resp.read()
-                    await callback.message.answer_photo(
+                    await message.answer_photo(
                         BufferedInputFile(img_bytes, filename="product.jpg"),
                         caption=caption,
                         parse_mode="HTML",
-                        reply_markup=markup
+                        reply_markup=get_sizes_reply_keyboard(sizes, language=user_lang)
                     )
-                else:
-                    await callback.message.answer(caption, parse_mode="HTML", reply_markup=markup)
-    else:
-        await callback.message.answer(caption, parse_mode="HTML", reply_markup=markup)
-        
-    await callback.answer()
+                    return
+                    
+    await message.answer(caption, parse_mode="HTML", reply_markup=get_sizes_reply_keyboard(sizes, language=user_lang))
 
-async def proceed_to_colors(callback: CallbackQuery, state: FSMContext, product: dict):
+@router.message(OrderingStates.size)
+async def select_size_message(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
+        
     user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+    
+    data = await state.get_data()
+    product = data["product_data"]
+    sizes = product.get("sizes", [])
+    
+    selected_size = None
+    for s in sizes:
+        if message.text == s["name"]:
+            selected_size = s
+            break
+            
+    if not selected_size:
+        await message.answer(_t(user_lang, "choose_size"))
+        return
+        
+    await state.update_data(size_id=selected_size["id"])
+    await proceed_to_colors_reply(message, state, product)
+
+async def proceed_to_colors_reply(message: Message, state: FSMContext, product: dict):
+    user_lang, _ = await get_user_lang_and_manager(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
     colors = product.get("colors", [])
     if not colors:
         await state.update_data(color_id=None)
-        await proceed_to_print_positions(callback, state)
+        await proceed_to_print_positions_reply(message, state)
         return
         
     await state.set_state(OrderingStates.color)
-    await callback.message.answer(_t(user_lang, "choose_color"), reply_markup=get_colors_keyboard(colors, language=user_lang))
+    await message.answer(_t(user_lang, "choose_color"), reply_markup=get_colors_reply_keyboard(colors, language=user_lang))
 
-@router.callback_query(F.data.startswith("size_"))
-async def select_size(callback: CallbackQuery, state: FSMContext):
-    size_id = int(callback.data.split("_")[1])
-    await state.update_data(size_id=size_id)
-    
-    data = await state.get_data()
-    product = data["product_data"]
-    
-    await callback.message.delete()
-    await proceed_to_colors(callback, state, product)
-    await callback.answer()
-
-async def proceed_to_print_positions(callback: CallbackQuery, state: FSMContext):
+async def proceed_to_print_positions_reply(message: Message, state: FSMContext):
     user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
     positions = await api_client.get_print_positions()
     if not positions or (isinstance(positions, dict) and positions.get("error")):
         err_msg = "Ошибка загрузки мест нанесения принта. Отмена." if user_lang == "ru" else "Rasm bosish joylarini yuklashda xatolik. Bekor qilindi."
-        await callback.message.answer(err_msg)
+        await message.answer(err_msg)
         await state.clear()
         return
         
     await state.set_state(OrderingStates.print_position)
-    await state.update_data(print_positions_list=positions, current_print_index=0)
+    await state.update_data(print_positions_list=positions)
     
-    await show_print_position_carousel(callback.message, positions, 0)
-
-async def show_print_position_carousel(message: Message, positions: list, index: int, edit_media: bool = False):
-    user_lang, _ = await get_user_lang_and_manager(
-        message.chat.id,
-        message.chat.username or "",
-        message.chat.first_name or ""
-    )
-    pos = positions[index]
     currency = await get_currency_display(user_lang)
-    if user_lang == "ru":
-        caption = (
-            f"📍 <b>Место нанесения принта ({index + 1}/{len(positions)}):</b>\n\n"
-            f"<b>Название:</b> {pos['name']}\n"
-            f"💵 <b>Наценка:</b> {pos['extra_price']} {currency}\n\n"
-            f"Выберите место нанесения, перелистывая варианты:"
-        )
-        prev_text = "◀️ Предыдущий"
-        next_text = "Следующий ▶️"
-        select_text = f"✅ Выбрать {pos['name']}"
-        cancel_text = "❌ Отмена"
-    else:
-        caption = (
-            f"📍 <b>Rasm bosiladigan joy ({index + 1}/{len(positions)}):</b>\n\n"
-            f"<b>Nomi:</b> {pos['name']}\n"
-            f"💵 <b>Ustama narxi:</b> {pos['extra_price']} {currency}\n\n"
-            f"Variantlarni ko'rib chiqib tanlang:"
-        )
-        prev_text = "◀️ Oldingi"
-        next_text = "Keyingi ▶️"
-        select_text = f"✅ Tanlash {pos['name']}"
-        cancel_text = "❌ Bekor qilish"
-        
-    builder = InlineKeyboardBuilder()
-    
-    nav_buttons = []
-    if len(positions) > 1:
-        nav_buttons.append(InlineKeyboardButton(text=prev_text, callback_data="print_carousel_prev"))
-        nav_buttons.append(InlineKeyboardButton(text=next_text, callback_data="print_carousel_next"))
-    
-    if nav_buttons:
-        builder.row(*nav_buttons)
-        
-    builder.row(InlineKeyboardButton(text=select_text, callback_data=f"print_carousel_select_{pos['id']}"))
-    builder.row(
-        InlineKeyboardButton(text=_t(user_lang, "back"), callback_data="back_to_colors"),
-        InlineKeyboardButton(text=cancel_text, callback_data="cancel_action")
+    await message.answer(
+        _t(user_lang, "choose_print_position"),
+        reply_markup=get_print_positions_reply_keyboard(positions, language=user_lang, currency=currency)
     )
-    
-    reply_markup = builder.as_markup()
-    image_url = pos.get("image")
-    
-    img_bytes = None
-    if image_url:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as resp:
-                    if resp.status == 200:
-                        img_bytes = await resp.read()
-        except Exception as e:
-            logger.error(f"Failed to download carousel image: {e}")
 
-    if img_bytes:
-        photo_file = BufferedInputFile(img_bytes, filename="print_pos.png")
-        if edit_media and message.photo:
-            from aiogram.types import InputMediaPhoto
-            await message.edit_media(
-                media=InputMediaPhoto(media=photo_file, caption=caption, parse_mode="HTML"),
-                reply_markup=reply_markup
-            )
-        else:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            await message.answer_photo(
-                photo=photo_file,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=reply_markup
-            )
-    else:
-        if edit_media and not message.photo:
-            await message.edit_text(text=caption, parse_mode="HTML", reply_markup=reply_markup)
-        else:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            await message.answer(text=caption, parse_mode="HTML", reply_markup=reply_markup)
-
-@router.callback_query(F.data.startswith("color_"))
-async def select_color(callback: CallbackQuery, state: FSMContext):
-    color_id = int(callback.data.split("_")[1])
-    await state.update_data(color_id=color_id)
-    
-    await callback.message.delete()
-    await proceed_to_print_positions(callback, state)
-    await callback.answer()
-
-@router.callback_query(F.data.in_(["print_carousel_prev", "print_carousel_next"]))
-async def print_carousel_navigation(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    positions = data.get("print_positions_list")
-    index = data.get("current_print_index", 0)
-    
-    if not positions:
-        await callback.answer("Ошибка данных.")
+@router.message(OrderingStates.color)
+async def select_color_message(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
         return
         
-    if callback.data == "print_carousel_prev":
-        index = (index - 1) % len(positions)
-    else:
-        index = (index + 1) % len(positions)
-        
-    await state.update_data(current_print_index=index)
-    await show_print_position_carousel(callback.message, positions, index, edit_media=True)
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("print_carousel_select_"))
-async def select_print_carousel_position(callback: CallbackQuery, state: FSMContext):
     user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
-    print_position_id = int(callback.data.split("_")[3])
+    
+    data = await state.get_data()
+    product = data["product_data"]
+    colors = product.get("colors", [])
+    
+    selected_color = None
+    for c in colors:
+        name = c.get("name_uz") if (user_lang == "uz" and c.get("name_uz")) else c["name"]
+        if message.text == name:
+            selected_color = c
+            break
+            
+    if not selected_color:
+        await message.answer(_t(user_lang, "choose_color"))
+        return
+        
+    await state.update_data(color_id=selected_color["id"])
+    await proceed_to_print_positions_reply(message, state)
+
+@router.message(OrderingStates.print_position)
+async def select_print_position_message(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
+        
+    user_lang, _ = await get_user_lang_and_manager(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
     
     data = await state.get_data()
     positions = data.get("print_positions_list")
-    pos = next((p for p in positions if p["id"] == print_position_id), None)
+    currency = await get_currency_display(user_lang)
     
-    if not pos:
-        err_msg = "Ошибка выбора места нанесения." if user_lang == "ru" else "Rasm joyini tanlashda xatolik."
-        await callback.answer(err_msg)
+    selected_pos = None
+    for pos in positions:
+        name = pos.get("name_uz") if (user_lang == "uz" and pos.get("name_uz")) else pos["name"]
+        text = f"{name} (+{pos['extra_price']} {currency})"
+        if message.text == text or message.text == name:
+            selected_pos = pos
+            break
+            
+    if not selected_pos:
+        await message.answer(_t(user_lang, "choose_print_position"))
         return
         
-    await state.update_data(print_position_id=print_position_id, print_position_data=pos)
-    await callback.message.delete()
+    print_position_id = selected_pos["id"]
+    await state.update_data(print_position_id=print_position_id, print_position_data=selected_pos)
     
-    requires_multiple = pos.get("requires_multiple_designs", False)
+    requires_multiple = selected_pos.get("requires_multiple_designs", False)
     if user_lang == "ru":
         prompt_text = (
             "Загрузите ваш макет/изображение для принта (<b>Макет 1 / Спереди</b>):\n\n" if requires_multiple else
@@ -625,17 +713,16 @@ async def select_print_carousel_position(callback: CallbackQuery, state: FSMCont
             "Qo'llab-quvvatlanadigan formatlar: JPG, PNG, PDF, SVG.\n"
             "Iltimos, faylni <b>Hujjat</b> ko'rinishida (siquvsiz) yoki rasm sifatida yuboring."
         )
-    
+        
     await state.set_state(OrderingStates.design_file)
-    await callback.message.answer(
+    await message.answer(
         prompt_text,
         parse_mode="HTML",
-        reply_markup=get_back_cancel_keyboard(language=user_lang, back_callback_data="back_to_print")
+        reply_markup=get_design_file_reply_keyboard(language=user_lang, is_second=False)
     )
-    await callback.answer()
 
 @router.message(OrderingStates.design_file, F.photo | F.document)
-async def process_design_file(message: Message, state: FSMContext):
+async def process_design_file_message(message: Message, state: FSMContext):
     user_lang, _ = await get_user_lang_and_manager(
         message.from_user.id,
         message.from_user.username,
@@ -671,17 +758,17 @@ async def process_design_file(message: Message, state: FSMContext):
         if user_lang == "ru":
             prompt_text = (
                 "Загрузите ваш макет/изображение для принта (<b>Макет 2 / Сзади</b>):\n\n"
-                "<i>Если вы хотите использовать то же самое изображение для второго принта, нажмите кнопку ниже:</i>"
+                "<i>Если вы хотите использовать то же самое изображение для второго принта, выберите вариант ниже или отправьте новый файл:</i>"
             )
         else:
             prompt_text = (
                 "Rasm faylini yuklang (<b>2-rasm / Orqa tomoni</b>):\n\n"
-                "<i>Agar ikkinchi tomon uchun ham shu rasmdan foydalanmoqchi bo'lsangiz, quyidagi tugmani bosing:</i>"
+                "<i>Agar ikkinchi tomon uchun ham shu rasmdan foydalanmoqchi bo'lsangiz, quyidagi variantni bosing yoki yangi rasm yuboring:</i>"
             )
         await message.answer(
             prompt_text,
             parse_mode="HTML",
-            reply_markup=get_design_2_keyboard(language=user_lang)
+            reply_markup=get_design_file_reply_keyboard(language=user_lang, is_second=True)
         )
     else:
         await state.set_state(OrderingStates.comment)
@@ -691,38 +778,51 @@ async def process_design_file(message: Message, state: FSMContext):
         )
         await message.answer(
             prompt_text,
-            reply_markup=get_comment_skip_keyboard(language=user_lang)
+            reply_markup=get_comment_reply_keyboard(language=user_lang)
         )
 
-@router.callback_query(F.data == "skip_design_2")
-async def skip_design_2_callback(callback: CallbackQuery, state: FSMContext):
+@router.message(OrderingStates.design_file, F.text)
+async def process_design_file_text(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
     user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
-    await state.update_data(design_file_2_bytes=None, filename_2=None)
-    await state.set_state(OrderingStates.comment)
-    await callback.message.delete()
+    msg = "Пожалуйста, отправьте изображение (как фото или документ)." if user_lang == "ru" else "Iltimos, rasm yuboring (foto yoki hujjat ko'rinishida)."
+    await message.answer(msg)
+
+@router.message(OrderingStates.design_file_2, F.text)
+async def process_design_file_2_text(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
+        
+    user_lang, _ = await get_user_lang_and_manager(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
     
-    if user_lang == "ru":
-        msg_text = (
-            "Вы выбрали использовать то же изображение для второго принта.\n\n"
-            "Добавьте комментарий к макету (например, требования по размещению, размеру принта и т.д.):"
-        )
-    else:
-        msg_text = (
-            "Ikkinchi tomon uchun ham xuddi shu rasmni tanladingiz.\n\n"
+    if message.text in [_t("ru", "use_same_design"), _t("uz", "use_same_design")]:
+        await state.update_data(design_file_2_bytes=None, filename_2=None)
+        await state.set_state(OrderingStates.comment)
+        
+        prompt_text = (
+            "Добавьте комментарий к макету (например, требования по размещению, размеру принта и т.д.):" if user_lang == "ru" else
             "Rasm joylashuvi va o'lchami bo'yicha talablarni (komentariy) qoldiring:"
         )
-    await callback.message.answer(
-        msg_text,
-        reply_markup=get_comment_skip_keyboard(language=user_lang)
-    )
-    await callback.answer()
+        await message.answer(
+            prompt_text,
+            reply_markup=get_comment_reply_keyboard(language=user_lang)
+        )
+        return
+        
+    msg = "Пожалуйста, отправьте изображение для второго принта (как фото или документ)." if user_lang == "ru" else "Iltimos, ikkinchi tomon uchun rasm yuboring (foto yoki hujjat ko'rinishida)."
+    await message.answer(msg)
 
 @router.message(OrderingStates.design_file_2, F.photo | F.document)
-async def process_design_file_2(message: Message, state: FSMContext):
+async def process_design_file_2_message(message: Message, state: FSMContext):
     user_lang, _ = await get_user_lang_and_manager(
         message.from_user.id,
         message.from_user.username,
@@ -756,35 +856,34 @@ async def process_design_file_2(message: Message, state: FSMContext):
     )
     await message.answer(
         prompt_text,
-        reply_markup=get_comment_skip_keyboard(language=user_lang)
+        reply_markup=get_comment_reply_keyboard(language=user_lang)
     )
-
-@router.callback_query(F.data == "skip_comment")
-async def skip_comment(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(comment="")
-    await ask_quantity(callback.message, state)
-    await callback.answer()
 
 @router.message(OrderingStates.comment)
-async def process_comment(message: Message, state: FSMContext):
-    await state.update_data(comment=message.text)
-    await ask_quantity(message, state)
-
-async def ask_quantity(message: Message, state: FSMContext):
+async def process_comment_message(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
+        
     user_lang, _ = await get_user_lang_and_manager(
-        message.chat.id,
-        message.chat.username or "",
-        message.chat.first_name or ""
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
+    )
+    
+    if message.text in [_t("ru", "skip"), _t("uz", "skip")]:
+        await state.update_data(comment="")
+    else:
+        await state.update_data(comment=message.text)
+        
+    await ask_quantity_reply(message, state)
+
+async def ask_quantity_reply(message: Message, state: FSMContext):
+    user_lang, _ = await get_user_lang_and_manager(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
     await state.set_state(OrderingStates.quantity)
-    builder = InlineKeyboardBuilder()
-    for q in [1, 2, 3, 5, 10]:
-        builder.button(text=str(q), callback_data=f"qty_{q}")
-    builder.adjust(5)
-    builder.row(
-        InlineKeyboardButton(text=_t(user_lang, "back"), callback_data="back_to_comment"),
-        InlineKeyboardButton(text=_t(user_lang, "cancel"), callback_data="cancel_action")
-    )
     
     if user_lang == "ru":
         prompt_text = (
@@ -800,70 +899,86 @@ async def ask_quantity(message: Message, state: FSMContext):
     await message.answer(
         prompt_text,
         parse_mode="HTML",
-        reply_markup=builder.as_markup()
+        reply_markup=get_quantity_reply_keyboard(language=user_lang)
     )
 
-@router.callback_query(F.data.startswith("qty_"))
-async def select_quantity_callback(callback: CallbackQuery, state: FSMContext):
-    quantity = int(callback.data.split("_")[1])
-    await add_product_to_cart(callback.message, state, quantity)
-    await callback.answer()
-
 @router.message(OrderingStates.quantity)
-async def process_quantity_text(message: Message, state: FSMContext):
+async def process_quantity_message(message: Message, state: FSMContext):
+    if await handle_ordering_control_buttons(message, state):
+        return
+        
     user_lang, _ = await get_user_lang_and_manager(
         message.from_user.id,
         message.from_user.username,
         message.from_user.first_name
     )
+    
     try:
         quantity = int(message.text)
         if quantity <= 0:
             raise ValueError()
     except ValueError:
-        err_msg = "Пожалуйста, введите корректное положительное число." if user_lang == "ru" else "Iltimos, to'g'ri musbat son kiriting."
-        await message.answer(err_msg)
+        await message.answer(_t(user_lang, "invalid_quantity"))
         return
         
-    await add_product_to_cart(message, state, quantity)
+    await add_product_to_cart_reply(message, state, quantity)
 
-async def add_product_to_cart(message: Message, state: FSMContext, quantity: int):
+async def add_product_to_cart_reply(message: Message, state: FSMContext, quantity: int):
     user_lang, _ = await get_user_lang_and_manager(
-        message.chat.id,
-        message.chat.username or "",
-        message.chat.first_name or ""
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name
     )
     data = await state.get_data()
     
+    product_id = data["product_id"]
+    size_id = data.get("size_id")
+    color_id = data.get("color_id")
+    print_position_id = data.get("print_position_id")
+    comment = data.get("comment", "")
+    
+    design_file_bytes = data.get("design_file_bytes")
+    filename = data.get("filename", "design.png")
+    
+    design_file_2_bytes = data.get("design_file_2_bytes")
+    filename_2 = data.get("filename_2", "design_2.png")
+    
     res = await api_client.add_to_cart(
-        telegram_id=message.chat.id,
-        product_id=data["product_id"],
-        size_id=data["size_id"],
-        color_id=data["color_id"],
-        print_position_id=data["print_position_id"],
+        telegram_id=message.from_user.id,
+        product_id=product_id,
         quantity=quantity,
-        design_file_bytes=data["design_file_bytes"],
-        filename=data["filename"],
-        design_file_2_bytes=data.get("design_file_2_bytes"),
-        filename_2=data.get("filename_2"),
-        comment=data.get("comment", "")
+        size_id=size_id,
+        color_id=color_id,
+        print_position_id=print_position_id,
+        comment=comment,
+        design_file_bytes=design_file_bytes,
+        filename=filename,
+        design_file_2_bytes=design_file_2_bytes,
+        filename_2=filename_2
     )
     
-    if not res or res.get("error"):
-        err_msg = "Произошла ошибка при добавлении в корзину. Попробуйте еще раз." if user_lang == "ru" else "Savatchaga qo'shishda xatolik yuz berdi. Qayta urinib ko'ring."
-        await message.answer(err_msg)
-        logger.error(f"Add to cart error: {res}")
-    else:
-        success_msg = f"🛒 Товар успешно добавлен в корзину ({quantity} шт.)!" if user_lang == "ru" else f"🛒 Mahsulot savatchaga muvaffaqiyatli qo'shildi ({quantity} dona)!"
+    await state.clear()
+    
+    if res and not res.get("error"):
+        success = f"🛒 Товар успешно добавлен в корзину ({quantity} шт.)!" if user_lang == "ru" else f"🛒 Mahsulot savatchaga muvaffaqiyatli qo'shildi ({quantity} dona)!"
         await message.answer(
-            success_msg,
+            success,
             reply_markup=await get_user_main_menu(
-                message.chat.id,
-                message.chat.username or "",
-                message.chat.first_name or ""
+                message.from_user.id,
+                message.from_user.username,
+                message.from_user.first_name
             )
         )
-    await state.clear()
+    else:
+        err = "Произошла ошибка при добавлении в корзину. Пожалуйста, попробуйте позже." if user_lang == "ru" else "Savatchaga qo'shishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring."
+        await message.answer(
+            err,
+            reply_markup=await get_user_main_menu(
+                message.from_user.id,
+                message.from_user.username,
+                message.from_user.first_name
+            )
+        )
 
 # =====================================================================
 # CART HANDLERS
@@ -1767,224 +1882,3 @@ async def other_services_phone_receive(message: Message, state: FSMContext):
         )
 
 # =====================================================================
-# BACK NAVIGATION HANDLERS
-# =====================================================================
-
-@router.callback_query(F.data == "back_to_products")
-async def back_to_products(callback: CallbackQuery, state: FSMContext):
-    user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
-    )
-    data = await state.get_data()
-    category_id = data.get("category_id")
-    if not category_id:
-        await back_to_categories(callback, state)
-        return
-        
-    products = await api_client.get_products(category_id)
-    if not products or (isinstance(products, dict) and products.get("error")):
-        await callback.answer("Ошибка при возврате к списку товаров.")
-        return
-        
-    await state.set_state(OrderingStates.product)
-    currency = await get_currency_display(user_lang)
-    await callback.message.edit_text(
-        _t(user_lang, "choose_product"), 
-        reply_markup=get_products_keyboard(products, category_id, language=user_lang, currency=currency)
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_sizes")
-async def back_to_sizes(callback: CallbackQuery, state: FSMContext):
-    user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
-    )
-    data = await state.get_data()
-    product_id = data.get("product_id")
-    if not product_id:
-        await callback.answer("Ошибка.")
-        return
-        
-    product = await api_client.get_product_detail(product_id)
-    if not product or (isinstance(product, dict) and product.get("error")):
-        await callback.answer("Ошибка при возврате.")
-        return
-        
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-        
-    await state.set_state(OrderingStates.size)
-    
-    title = product.get("title_uz") if (user_lang == "uz" and product.get("title_uz")) else product["title"]
-    description = product.get("description_uz") if (user_lang == "uz" and product.get("description_uz")) else product["description"]
-    currency = await get_currency_display(user_lang)
-    caption = f"👕 <b>{title}</b>\n\n{description}\n\n💵 Цена: {product['price']} {currency}" if user_lang == "ru" else f"👕 <b>{title}</b>\n\n{description}\n\n💵 Narxi: {product['price']} {currency}"
-    
-    reply_markup = get_sizes_keyboard(product.get("sizes", []), language=user_lang)
-    
-    img_bytes = None
-    if product.get("image"):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(product["image"]) as resp:
-                    if resp.status == 200:
-                        img_bytes = await resp.read()
-        except Exception as e:
-            logger.error(f"Failed to download image on back: {e}")
-            
-    if img_bytes:
-        await callback.message.answer_photo(
-            photo=BufferedInputFile(img_bytes, filename="product.png"),
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=reply_markup
-        )
-    else:
-        await callback.message.answer(
-            text=caption,
-            parse_mode="HTML",
-            reply_markup=reply_markup
-        )
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_colors")
-async def back_to_colors(callback: CallbackQuery, state: FSMContext):
-    user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
-    )
-    data = await state.get_data()
-    product_id = data.get("product_id")
-    if not product_id:
-        await callback.answer("Ошибка.")
-        return
-        
-    product = await api_client.get_product_detail(product_id)
-    if not product or (isinstance(product, dict) and product.get("error")):
-        await callback.answer("Ошибка при возврате.")
-        return
-        
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-        
-    await state.set_state(OrderingStates.color)
-    await callback.message.answer(
-        _t(user_lang, "choose_color"),
-        reply_markup=get_colors_keyboard(product.get("colors", []), language=user_lang)
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_print")
-async def back_to_print(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    positions = data.get("print_positions_list")
-    index = data.get("current_print_index", 0)
-    
-    if not positions:
-        await callback.answer("Ошибка.")
-        return
-        
-    await state.set_state(OrderingStates.print_position)
-    await show_print_position_carousel(callback.message, positions, index, edit_media=False)
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_design1")
-async def back_to_design1(callback: CallbackQuery, state: FSMContext):
-    user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
-    )
-    data = await state.get_data()
-    pos = data.get("print_position_data")
-    
-    requires_multiple = pos.get("requires_multiple_designs", False) if pos else False
-    if user_lang == "ru":
-        prompt_text = (
-            "Загрузите ваш макет/изображение для принта (<b>Макет 1 / Спереди</b>):\n\n" if requires_multiple else
-            "Загрузите ваш макет/изображение для принта:\n\n"
-        )
-        prompt_text += (
-            "Поддерживаемые форматы: JPG, PNG, PDF, SVG.\n"
-            "Пожалуйста, отправьте файл как <b>Документ</b> (без сжатия) или как фото."
-        )
-    else:
-        prompt_text = (
-            "Rasm faylini yuklang (<b>1-rasm / Old tomoni</b>):\n\n" if requires_multiple else
-            "Rasm faylini yuklang:\n\n"
-        )
-        prompt_text += (
-            "Qo'llab-quvvatlanadigan formatlar: JPG, PNG, PDF, SVG.\n"
-            "Iltimos, faylni <b>Hujjat</b> ko'rinishida (siquvsiz) yoki rasm sifatida yuboring."
-        )
-        
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-        
-    await state.set_state(OrderingStates.design_file)
-    await callback.message.answer(
-        prompt_text,
-        parse_mode="HTML",
-        reply_markup=get_back_cancel_keyboard(language=user_lang, back_callback_data="back_to_print")
-    )
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_designs")
-async def back_to_designs(callback: CallbackQuery, state: FSMContext):
-    user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
-    )
-    data = await state.get_data()
-    pos = data.get("print_position_data")
-    
-    requires_multiple = pos.get("requires_multiple_designs", False) if pos else False
-    
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-        
-    if requires_multiple:
-        await state.set_state(OrderingStates.design_file_2)
-        await callback.message.answer(
-            _t(user_lang, "upload_design_2"),
-            reply_markup=get_design_2_keyboard(language=user_lang)
-        )
-    else:
-        await back_to_design1(callback, state)
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_comment")
-async def back_to_comment(callback: CallbackQuery, state: FSMContext):
-    user_lang, _ = await get_user_lang_and_manager(
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name
-    )
-    
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-        
-    await state.set_state(OrderingStates.comment)
-    await callback.message.answer(
-        _t(user_lang, "enter_comment"),
-        reply_markup=get_comment_skip_keyboard(language=user_lang)
-    )
-    await callback.answer()
-
-

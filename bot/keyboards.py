@@ -175,3 +175,95 @@ def get_design_2_keyboard(language: str = "ru") -> InlineKeyboardMarkup:
         InlineKeyboardButton(text=_t(language, "cancel"), callback_data="cancel_action")
     )
     return builder.as_markup()
+
+def get_categories_reply_keyboard(categories: list, language: str = "ru") -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    for category in categories:
+        name = category.get("name_uz") if (language == "uz" and category.get("name_uz")) else category["name"]
+        builder.button(text=name)
+    builder.adjust(2)
+    builder.row(KeyboardButton(text=_t(language, "cancel")))
+    return builder.as_markup(resize_keyboard=True)
+
+def get_products_reply_keyboard(products: list, language: str = "ru", currency: str = None) -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    if not currency:
+        currency = "so'm" if language == "uz" else "руб."
+    for prod in products:
+        title = prod.get("title_uz") if (language == "uz" and prod.get("title_uz")) else prod["title"]
+        price_text = f"{title} - {prod['price']} {currency}"
+        builder.button(text=price_text)
+    builder.adjust(1)
+    builder.row(
+        KeyboardButton(text=_t(language, "back")),
+        KeyboardButton(text=_t(language, "cancel"))
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+def get_sizes_reply_keyboard(sizes: list, language: str = "ru") -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    for s in sizes:
+        builder.button(text=s["name"])
+    builder.adjust(3)
+    builder.row(
+        KeyboardButton(text=_t(language, "back")),
+        KeyboardButton(text=_t(language, "cancel"))
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+def get_colors_reply_keyboard(colors: list, language: str = "ru") -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    for c in colors:
+        name = c.get("name_uz") if (language == "uz" and c.get("name_uz")) else c["name"]
+        builder.button(text=name)
+    builder.adjust(2)
+    builder.row(
+        KeyboardButton(text=_t(language, "back")),
+        KeyboardButton(text=_t(language, "cancel"))
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+def get_print_positions_reply_keyboard(positions: list, language: str = "ru", currency: str = None) -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    if not currency:
+        currency = "so'm" if language == "uz" else "руб."
+    for pos in positions:
+        name = pos.get("name_uz") if (language == "uz" and pos.get("name_uz")) else pos["name"]
+        text = f"{name} (+{pos['extra_price']} {currency})"
+        builder.button(text=text)
+    builder.adjust(1)
+    builder.row(
+        KeyboardButton(text=_t(language, "back")),
+        KeyboardButton(text=_t(language, "cancel"))
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+def get_design_file_reply_keyboard(language: str = "ru", is_second: bool = False) -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    if is_second:
+        builder.button(text=_t(language, "use_same_design"))
+    builder.row(
+        KeyboardButton(text=_t(language, "back")),
+        KeyboardButton(text=_t(language, "cancel"))
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+def get_comment_reply_keyboard(language: str = "ru") -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.button(text=_t(language, "skip"))
+    builder.row(
+        KeyboardButton(text=_t(language, "back")),
+        KeyboardButton(text=_t(language, "cancel"))
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+def get_quantity_reply_keyboard(language: str = "ru") -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    for q in ["1", "2", "3", "5", "10"]:
+        builder.button(text=q)
+    builder.adjust(5)
+    builder.row(
+        KeyboardButton(text=_t(language, "back")),
+        KeyboardButton(text=_t(language, "cancel"))
+    )
+    return builder.as_markup(resize_keyboard=True)
